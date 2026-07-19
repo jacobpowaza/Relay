@@ -1,8 +1,8 @@
 import { setTimeout as delay } from "node:timers/promises";
 import net from "node:net";
 
-export const defaultRendererPort = 3000;
-export const defaultApiPort = 3100;
+export const defaultRendererPort = 4317;
+export const defaultApiPort = 4318;
 export const rendererHost = "127.0.0.1";
 export const rendererUrl = rendererUrlForPort(defaultRendererPort);
 export const apiUrl = apiUrlForPort(defaultApiPort);

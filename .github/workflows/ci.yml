@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -19,3 +22,18 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - name: Verify .gitignore coverage
+        run: |
+          UNTRACKED=$(git ls-files --others --exclude-standard | head -100)
+          if [ -n "$UNTRACKED" ]; then
+            echo "Untracked files that may need .gitignore entries:"
+            echo "$UNTRACKED"
+          fi
+      - name: Verify no tracked generated files
+        run: |
+          GENERATED=$(git ls-files 'next-env.d.ts' '*.tsbuildinfo' '*.log' 2>/dev/null)
+          if [ -n "$GENERATED" ]; then
+            echo "ERROR: Generated files are still tracked:"
+            echo "$GENERATED"
+            exit 1
+          fi

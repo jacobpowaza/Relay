@@ -57,7 +57,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   await server.register(cors, {
     credentials: true,
-    origin: options.appOrigin ?? process.env.APP_ORIGIN ?? "http://localhost:3000",
+    origin: options.appOrigin ?? process.env.APP_ORIGIN ?? "http://localhost:4317",
   });
 
   server.setErrorHandler((error, request, reply) => {

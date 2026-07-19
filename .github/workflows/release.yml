@@ -9,7 +9,37 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Verify version consistency
+        run: |
+          ROOT_VER=$(node -e "console.log(require('./package.json').version)")
+          DESKTOP_VER=$(node -e "console.log(require('./apps/desktop/package.json').version)")
+          TAG_VER="${{ steps.version.outputs.VERSION }}"
+          if [ "$ROOT_VER" != "$TAG_VER" ] || [ "$DESKTOP_VER" != "$TAG_VER" ]; then
+            echo "ERROR: Version mismatch. Root=$ROOT_VER Desktop=$DESKTOP_VER Tag=$TAG_VER"
+            exit 1
+          fi
+
   build-mac-arm64:
+    needs: [validate]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,12 +60,18 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Generate checksums
+        working-directory: apps/desktop/release
+        run: |
+          shasum -a 256 *.dmg *.zip *.blockmap 2>/dev/null | tee checksums-mac-arm64.txt
       - uses: actions/upload-artifact@v4
         with:
           name: release-mac-arm64
           path: apps/desktop/release/
+          if-no-files-found: error
 
   build-mac-x64:
+    needs: [validate]
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
@@ -56,12 +92,18 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Generate checksums
+        working-directory: apps/desktop/release
+        run: |
+          shasum -a 256 *.dmg *.zip *.blockmap 2>/dev/null | tee checksums-mac-x64.txt
       - uses: actions/upload-artifact@v4
         with:
           name: release-mac-x64
           path: apps/desktop/release/
+          if-no-files-found: error
 
   build-win:
+    needs: [validate]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,12 +121,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - name: Generate checksums
+        shell: pwsh
+        working-directory: apps/desktop/release
+        run: |
+          Get-ChildItem *.exe, *.zip, *.blockmap | ForEach-Object {
+            $hash = (Get-FileHash $_.Name -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Out-File -FilePath checksums-win.txt -Encoding utf8 -Append
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: release-win
           path: apps/desktop/release/
+          if-no-files-found: error
 
   build-linux:
+    needs: [validate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,10 +152,15 @@ jobs:
       - run: pnpm --filter @relay/desktop package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate checksums
+        working-directory: apps/desktop/release
+        run: |
+          sha256sum *.AppImage *.blockmap 2>/dev/null | tee checksums-linux.txt
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
           path: apps/desktop/release/
+          if-no-files-found: error
 
   publish:
     needs: [build-mac-arm64, build-mac-x64, build-win, build-linux]
@@ -114,6 +171,8 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: artifacts/
+      - name: List artifacts
+        run: ls -lhR artifacts/
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
