@@ -1,0 +1,56 @@
+appId: com.relay.desktop
+productName: Relay
+directories:
+  output: release
+files:
+  - src/**
+  - package.json
+  - from: ../web/out
+    to: renderer
+asar: true
+
+# Auto-update feed. electron-builder embeds this as app-update.yml inside the
+# package and publishes latest.yml / latest-mac.yml (+ blockmaps) alongside the
+# installers so electron-updater can pick the right asset per OS/arch.
+publish:
+  provider: github
+  owner: jacobpowaza
+  repo: Relay
+  releaseType: release
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # entitlements: build/entitlements.mac.plist   # add when signing/notarizing
+  target:
+    # DMG for first install; ZIP is required for macOS auto-update.
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+
+linux:
+  category: Development
+  icon: build/icon.png
+  target:
+    - AppImage

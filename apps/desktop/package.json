@@ -1,0 +1,27 @@
+{
+  "name": "@relay/desktop",
+  "productName": "Relay",
+  "description": "Development planning and context that stays with the project.",
+  "author": "Relay",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "src/main.cjs",
+  "scripts": {
+    "build": "node scripts/verify.mjs",
+    "dev": "node scripts/dev.mjs",
+    "lint": "eslint src scripts",
+    "package": "pnpm --filter @relay/web build && electron-builder --config electron-builder.yml",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "electron": "43.1.1",
+    "electron-builder": "26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/session-start.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Loading Relay progress context"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "functions.exec_command|functions.apply_patch|Bash|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/checkpoint-hint.mjs\"",
+            "timeout": 5,
+            "async": true,
+            "statusMessage": "Checking Relay checkpoint state"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/checkpoint-hint.mjs\" pre-compact",
+            "timeout": 5,
+            "statusMessage": "Preparing Relay handoff reminder"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/session-end.mjs\"",
+            "timeout": 10,
+            "async": true,
+            "statusMessage": "Saving Relay session handoff"
+          }
+        ]
+      }
+    ]
+  }
+}

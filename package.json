@@ -1,0 +1,33 @@
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "api:dev": "turbo run dev --filter=@relay/api",
+    "app:dev": "turbo run dev --filter=@relay/desktop",
+    "app:package": "pnpm --filter @relay/desktop package",
+    "build": "turbo run build",
+    "dev": "turbo run dev --filter=@relay/desktop",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch --parallel",
+    "typecheck": "turbo run typecheck",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "22.20.1",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.10",
+    "globals": "17.7.0",
+    "turbo": "2.10.5",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "4.1.10"
+  }
+}

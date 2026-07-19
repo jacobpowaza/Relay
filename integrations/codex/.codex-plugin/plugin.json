@@ -1,0 +1,37 @@
+{
+  "name": "relay",
+  "description": "Relay progress-board integration for resumable Codex development work.",
+  "version": "0.1.0+codex.20260718221807",
+  "author": {
+    "name": "Relay"
+  },
+  "homepage": "https://github.com/",
+  "repository": "https://github.com/",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "relay",
+    "planning",
+    "codex",
+    "progress",
+    "handoff"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Relay",
+    "shortDescription": "Resume Codex work from Relay boards.",
+    "longDescription": "Connect Codex sessions to Relay boards, resume project context, and checkpoint meaningful progress into the local Relay desktop workspace.",
+    "developerName": "Relay",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Resume this project with Relay",
+      "Show Relay status for this repo",
+      "Checkpoint this Codex session to Relay"
+    ],
+    "brandColor": "#0E65B9"
+  }
+}

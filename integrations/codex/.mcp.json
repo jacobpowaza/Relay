@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "relay": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/mcp/relay-mcp.mjs"
+      ]
+    }
+  }
+}

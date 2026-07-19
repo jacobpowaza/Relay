@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+  - integrations/*
+
+allowBuilds:
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+  sharp: true
+  unrs-resolver: true

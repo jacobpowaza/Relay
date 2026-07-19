@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: relay
+      POSTGRES_PASSWORD: relay
+      POSTGRES_USER: relay
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay -d relay"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    volumes:
+      - relay-postgres:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: relay
+      MINIO_ROOT_PASSWORD: relay-local-development
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - relay-minio:/data
+
+volumes:
+  relay-minio:
+  relay-postgres:

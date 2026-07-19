@@ -1,0 +1,62 @@
+{
+  "name": "relay-progress",
+  "description": "Always-active Relay progress-board integration for resumable Claude Code development work.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Relay"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Loading Relay progress context"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/checkpoint-hint.mjs\"",
+            "timeout": 5,
+            "async": true,
+            "statusMessage": "Checking Relay checkpoint state"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/checkpoint-hint.mjs\" pre-compact",
+            "timeout": 5,
+            "statusMessage": "Preparing Relay handoff reminder"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end.mjs\"",
+            "timeout": 10,
+            "async": true,
+            "statusMessage": "Saving Relay session handoff"
+          }
+        ]
+      }
+    ]
+  }
+}
