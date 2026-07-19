@@ -1,13 +1,5 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/relay-board.png">
-  <img alt="Relay" src="docs/screenshots/relay-board.png" width="0" height="0" style="display:none; visibility:hidden;">
-</picture>
-
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jacobpowaza/Relay/main/apps/desktop/build/icon-1024.png">
-    <img src="https://raw.githubusercontent.com/jacobpowaza/Relay/main/apps/desktop/build/icon-1024.png" width="96" height="96" alt="Relay">
-  </picture>
+  <img src="apps/desktop/build/icon-1024.png" width="96" height="96" alt="Relay">
 </p>
 
 <h1 align="center">Relay</h1>
