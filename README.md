@@ -1,61 +1,101 @@
-# Relay
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/relay-board.png">
+  <img alt="Relay" src="docs/screenshots/relay-board.png" width="0" height="0" style="display:none; visibility:hidden;">
+</picture>
 
-Development that remembers.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jacobpowaza/Relay/main/apps/desktop/build/icon-1024.png">
+    <img src="https://raw.githubusercontent.com/jacobpowaza/Relay/main/apps/desktop/build/icon-1024.png" width="96" height="96" alt="Relay">
+  </picture>
+</p>
 
-Relay is a local-first desktop planning system for software work. It keeps
+<h1 align="center">Relay</h1>
+<p align="center"><em>Development that remembers.</em></p>
+
+<p align="center">
+  <a href="https://github.com/jacobpowaza/Relay/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License">
+  </a>
+  <a href="https://github.com/jacobpowaza/Relay/releases">
+    <img src="https://img.shields.io/github/v/release/jacobpowaza/Relay?include_prereleases&label=release" alt="Release">
+  </a>
+  <a href="https://github.com/jacobpowaza/Relay/actions/workflows/ci.yml">
+    <img src="https://github.com/jacobpowaza/Relay/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
+  <img src="https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen" alt="Node">
+  <img src="https://img.shields.io/badge/pnpm-11.10.0-orange" alt="pnpm">
+</p>
+
+Relay is a **local-first** desktop planning system for software work. It keeps
 boards, detailed plans, tasks, decisions, activity, and project context in one
 place so humans and AI coding agents can resume work without rebuilding the
 same context every session.
 
-Relay is not a hosted SaaS app. The first release runs inside Electron and
-stores user data in the operating system's app-owned data directory.
+Relay is not a hosted SaaS app. It runs inside Electron and stores user data
+in the operating system's app-owned data directory.
+
+---
 
 ## Screenshots
 
-<p>
+<p align="center">
   <img src="docs/screenshots/relay-board.png" alt="Relay board view with filtered task cards and directory workflow controls" width="760">
+  <br>
+  <em>Board view — organize work into directories, projects, and boards</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/relay-board-detail.png" alt="Relay board detail with task breakdown and activity" width="760">
+  <br>
+  <em>Board detail — plan work with phases, tasks, decisions, and activity</em>
 </p>
 
 The repository includes a docs-only example workspace at
 `docs/examples/mock-workspace.json`. Relay does not seed this data
 automatically; new installations start empty.
 
-## What Relay Does
+---
 
-- Organize work into directories, linked projects, and boards.
-- Plan work with phases, detailed plans, decisions, and important context.
-- Track cards with status, priority, type, tags, notes, blockers, progress, and
-  completion criteria.
-- Record readable activity for meaningful human and agent actions.
-- Review and commit Git changes from a built-in workbench: per-file diffs,
+## Features
+
+- **Organize** work into directories, linked projects, and boards.
+- **Plan** work with phases, detailed plans, decisions, and important context.
+- **Track** cards with status, priority, type, tags, notes, blockers, progress,
+  and completion criteria.
+- **Record** readable activity for meaningful human and agent actions.
+- **Review & commit** Git changes from a built-in workbench: per-file diffs,
   split staged changes into multiple focused commits, a pre-commit review step
   that re-checks HEAD and each file before executing, and commit history with
   side-by-side comparison.
-- Check for, download, and install app updates from an in-app update center
-  backed by electron-updater, with manual check, skip-version, and
-  install-and-restart controls.
-- Persist local state through the Electron preload bridge, not browser-only
+- **Update** with automatic update checks, download, and install from an in-app
+  update center backed by electron-updater, with manual check, skip-version,
+  and install-and-restart controls.
+- **Persist** local state through the Electron preload bridge, not browser-only
   storage.
-- Resume linked projects through Codex and Claude Code integration scripts and
-  hooks.
-- Keep Claude/Codex as optional accelerators. Manual board, task, context,
-  activity, directory, and settings workflows remain available in the app.
+- **Integrate** with Codex and Claude Code via plugin scripts and hooks for
+  context resumption across sessions.
+
+---
 
 ## Status
 
-Relay is in active implementation. The local desktop flow, renderer, app-owned
+Relay is in active development. The local desktop flow, renderer, app-owned
 persistence, manual board workflows, and local Codex/Claude integration scripts
-are present. Hosted sync, account management, signed production installers, and
-full release automation are still future work.
+are present and functional. Hosted sync, account management, and signed
+production installers are future work.
 
-See `docs/implementation-plan.md` and `docs/stages/` for architecture,
-delivery evidence, and remaining gates.
+[Download the latest release](https://github.com/jacobpowaza/Relay/releases) for
+macOS (Apple Silicon & Intel), Windows (x64 & arm64), and Linux.
+
+---
 
 ## Prerequisites
 
 - Node.js 22 or newer
 - pnpm 11
-- macOS, Windows, or Linux for the Electron desktop shell
+- macOS, Windows, or Linux
 
 ## Install
 
@@ -69,14 +109,13 @@ pnpm install
 pnpm app:dev
 ```
 
-Relay opens as a native desktop window. User-created directories, boards,
-plans, cards, and activity are stored in:
+Relay opens as a native desktop window. User data is stored in:
 
 ```text
 <Electron userData>/relay-data/workspace.json
 ```
 
-On macOS development builds, this is typically under:
+On macOS development builds:
 
 ```text
 ~/Library/Application Support/Relay/relay-data/workspace.json
@@ -84,64 +123,12 @@ On macOS development builds, this is typically under:
 
 ## Load Example Data
 
-Relay intentionally starts empty. To preview a populated workspace, run the app
-once, quit it, then copy the docs example into the local workspace path shown in
-Settings:
+Relay intentionally starts empty. To preview a populated workspace:
 
 ```bash
 mkdir -p "$HOME/Library/Application Support/Relay/relay-data"
 cp docs/examples/mock-workspace.json "$HOME/Library/Application Support/Relay/relay-data/workspace.json"
 pnpm app:dev
-```
-
-Use a disposable development profile when testing with mock data. This command
-replaces the current local Relay workspace file.
-
-## Codex Integration Smoke Test
-
-Install the local Codex plugin while developing Relay:
-
-```bash
-codex plugin marketplace add "$PWD"
-codex plugin add relay@relay-local
-```
-
-Start a new Codex thread after installing or reinstalling. Slash commands are
-loaded when a thread starts. Use `/relay` for status/resume/checkpoint flows;
-if your Codex build shows namespaced commands, use `/relay:relay`.
-
-From any project directory:
-
-```bash
-printf 'Manual plugin smoke test\n\n- Verify Relay link\n' | node integrations/codex/scripts/relay-progress.mjs create-board --cwd "$PWD" --title "Relay Plugin Smoke Test"
-node integrations/codex/scripts/relay-progress.mjs status --cwd "$PWD"
-node integrations/codex/scripts/relay-progress.mjs resume --cwd "$PWD"
-printf '{"cwd":"%s"}' "$PWD" | node integrations/codex/hooks/session-start.mjs
-```
-
-Expected result: the status and hook output show `[RELAY] Active` for a linked
-project. Relay activity should update when a checkpoint is written:
-
-```bash
-printf '{"summary":"Smoke checkpoint from Codex","commands":["pnpm check"],"changedFiles":["apps/web/components/relay-app.tsx"],"progress":50}' | node integrations/codex/scripts/relay-progress.mjs checkpoint --cwd "$PWD"
-```
-
-## Claude Code Integration Smoke Test
-
-From any project directory:
-
-```bash
-printf 'Manual plugin smoke test\n\n- Verify Relay link\n' | node integrations/claude-code/scripts/relay-progress.mjs create-board --cwd "$PWD" --title "Relay Claude Smoke Test"
-node integrations/claude-code/scripts/relay-progress.mjs status --cwd "$PWD"
-node integrations/claude-code/scripts/relay-progress.mjs resume --cwd "$PWD"
-printf '{"cwd":"%s"}' "$PWD" | node integrations/claude-code/hooks/session-start.mjs
-```
-
-Expected result: the status and hook output show `[RELAY] Active` for a linked
-project. Relay activity should update when a checkpoint is written:
-
-```bash
-printf '{"summary":"Smoke checkpoint from Claude","commands":["pnpm check"],"changedFiles":["apps/web/components/settings-modal.tsx"],"progress":65}' | node integrations/claude-code/scripts/relay-progress.mjs checkpoint --cwd "$PWD"
 ```
 
 ## Build
@@ -166,14 +153,15 @@ Generated package artifacts are ignored and should not be committed.
 pnpm check
 ```
 
-This runs linting, TypeScript checks, tests, and production builds across the
+Runs linting, TypeScript checks, tests, and production builds across the
 workspace.
+
+---
 
 ## Repository Layout
 
 ```text
 apps/
-  api/                  Optional future sync API
   desktop/              Electron main process, preload bridge, local storage
   web/                  Static Next.js renderer embedded in Electron
 packages/
@@ -203,5 +191,4 @@ docs/
 
 ## License
 
-Relay is licensed under AGPL-3.0. The canonical license file is maintained in
-the GitHub repository.
+[AGPL-3.0](LICENSE) &mdash; Relay is free software. See `LICENSE` for details.
