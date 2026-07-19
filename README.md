@@ -164,23 +164,80 @@ A **board** represents a project or initiative. Each board contains:
 
 ### Agent Integrations
 
-Relay provides integrations for AI coding agents so they can read and write board state automatically.
+Relay provides integrations for AI coding agents so they can read and write board state automatically. Both integrations follow a **fail-open** design: if Relay is unavailable, the integration does not block the coding session.
 
-**Claude Code:** The `integrations/claude-code/` plugin hooks into Claude Code sessions. On session start, it identifies the repository, checks if it is linked to a board, and emits a concise context packet. Checkpoint hooks record progress during the session. Session-end hooks produce structured handoffs for the next session.
+#### Claude Code (`/relay-progress`)
 
-**Codex:** The `integrations/codex/` plugin provides the same capabilities through Codex's plugin system, including an MCP server for real-time board operations and session hooks for context resumption.
+The Claude Code integration runs automatically via lifecycle hooks:
 
-### Token-Saving Behavior
+- **Session start** — detects the repository, checks for a linked board, and prints a compact `[RELAY] Active` summary with board name, active card, recent context, and branch state
+- **During work** — a checkpoint reminder fires every 20 minutes (and before context compaction) prompting you to record progress
+- **Session end** — saves a structured handoff for the next session
 
-Relay minimizes token usage in AI agent contexts by:
+You can also drive Relay manually from the Claude Code prompt:
 
-- Emitting **concise context packets** instead of dumping the full project history
-- Ranking context by relevance to the current card
-- Including only active decisions, current blockers, and the latest handoff by default
-- Recording **meaningful engineering rationale** rather than hidden model reasoning
-- Allowing agents to retrieve omitted details explicitly rather than receiving everything
+```sh
+# Show status for the current directory
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs status --cwd "$PWD"
 
-This means an agent can resume work from a handoff (typically <1k tokens) rather than re-reading an entire conversation or project plan.
+# Create a board from the original user request
+printf '%s' "$ORIGINAL_USER_REQUEST" |
+  node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+    create-board --cwd "$PWD" --title "$PROJECT_NAME"
+
+# Resume work from a linked board (≤3k token handoff)
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs resume --cwd "$PWD"
+
+# Checkpoint progress
+printf '{"summary":"Implemented auth flow","changedFiles":["src/auth.ts"],"tests":["auth.test.ts"],"progress":75}' |
+  node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+    checkpoint --cwd "$PWD" --card-id "$CARD_ID"
+
+# Create cards, notes, context records, and decisions
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+  create-card --cwd "$PWD" --title "Add login page" --column Ready --tags ui,security
+
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+  record-decision --cwd "$PWD" --title "Use OAuth 2.0" < decision.json
+```
+
+When Claude Code auto-detects a continuation request ("continue", "resume", "keep working"), it automatically resumes the existing board — no manual command needed.
+
+#### Codex (`@Relay`)
+
+The Codex integration provides the same capabilities through Codex's plugin system with an MCP server for real-time board operations:
+
+```sh
+# Slash commands (type /relay in the Codex prompt):
+/relay status              # Show linked board summary
+/relay resume              # Load resume packet and continue work
+/relay checkpoint          # Write a checkpoint before switching tasks
+/relay create-board "Add payment UI"   # Create and link a new board
+```
+
+When MCP is available, Codex uses `relay_status` and `relay_resume` tools directly. Behind the scenes, both integrations use the same `relay-progress.mjs` script and store data in the same local workspace.
+
+#### How It Saves Tokens
+
+Relay minimizes AI agent context consumption in several ways:
+
+| Technique | Impact |
+|---|---|
+| **Compact handoffs** (~300–1000 tokens) | A resume packet replaces re-reading full conversation history (potentially 10k–100k+ tokens) |
+| **Ranked context** | Only active decisions, current blockers, and relevant cards are included by default |
+| **No duplication** | The board captures what the agent did, not verbatim model reasoning — eliminating the "hidden monologue" token tax |
+| **Explicit retrieval** | Agents fetch omitted details on demand instead of receiving everything preemptively |
+| **Stable across sessions** | A handoff from session N carries forward to session N+1 without repeating prior context |
+
+Without Relay, an agent returning to a project often re-reads past conversation logs or the full project plan — tens of thousands of tokens. With Relay, the agent loads a bounded resume packet (~3k tokens max), picks up the active card, and continues working.
+
+#### Typical Workflow
+
+1. **Start a large task** — Claude Code / Codex creates a Relay board with phases and cards from the raw user request
+2. **Work through cards** — The agent picks cards, implements them, and moves them through columns
+3. **Checkpoint periodically** — Before context compaction, session end, or switching tasks, the agent writes a checkpoint
+4. **Resume later** — A new session loads the handoff, sees where work left off, and continues without re-reading the project
+5. **Track decisions** — Architecture decisions are recorded in the board and resurfaced in future sessions, preventing re-deliberation
 
 ---
 

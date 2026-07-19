@@ -87,7 +87,8 @@ describe("background-service", () => {
 
   it("applies login item through the OS API", () => {
     const app = fakeApp();
-    const bg = createBackgroundService({ app, platformService });
+    const testPlatform = { ...platformService, isMac: true, isWindows: false };
+    const bg = createBackgroundService({ app, platformService: testPlatform });
     bg.setSettings({ runInBackground: false, launchAtLogin: true, keepAliveOnClose: false, closeAction: "quit" });
     expect(app.setLoginItemSettings).toHaveBeenCalledWith(expect.objectContaining({ openAtLogin: true }));
   });
