@@ -5,7 +5,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "build": "node -e \"process.exit(0)\"",
+    "build": "node ../../integrations/scripts/vendor-core.mjs",
     "lint": "node -e \"process.exit(0)\"",
     "test": "node -e \"process.exit(0)\"",
     "test:watch": "node -e \"process.exit(0)\"",

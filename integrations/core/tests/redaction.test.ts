@@ -4,7 +4,7 @@ import { redactSecrets, shouldIgnorePath } from "../src/redaction.js";
 
 describe("redactSecrets", () => {
   it("redacts token-looking values and env assignments", () => {
-    const result = redactSecrets("OPENAI_API_KEY=sk-abc12345678901234567890\ntext ghp_abcdefghijklmnopqrstuvwxyz");
+    const result = redactSecrets("OPENAI_API_KEY=sk-abc12345678901234567890\ntext ghp_abcdefghijklmnopqrstuvwxyz"); // gitleaks:allow
 
     expect(result.redacted).not.toContain("sk-abc");
     expect(result.redacted).not.toContain("ghp_");

@@ -19,7 +19,7 @@ process.stdin.on("end", async () => {
   })();
   writeFileSync(path, `${previous}${line}\n`, { mode: 0o600 });
   try {
-    const core = await import("../../core/dist/src/index.js");
+    const core = await import("../core/index.js");
     const repository = core.detectRepositoryIdentity(process.cwd());
     const config = core.loadIntegrationConfig(core.defaultConfigPath());
     const link = config.repositories[repository.root];

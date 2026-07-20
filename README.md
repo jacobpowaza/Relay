@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">Relay</h1>
-<p align="center"><em>Development planning and context that stays with the project.</em></p>
+<p align="center"><em>Persistent workboards and context for AI-assisted development.</em></p>
 
 <p align="center">
   <a href="https://github.com/jacobpowaza/Relay/blob/main/LICENSE">
@@ -25,25 +25,245 @@
 
 ---
 
-## The Problem
+## What Is Relay?
 
-When someone gives an AI coding agent a large task, the work is usually poorly tracked. The agent may create a loose plan, consume a huge amount of context, lose important information between sessions, forget completed work, duplicate tasks, or force the user to repeatedly re-explain the project.
+Relay is a **local-first desktop workboard** for software development. It keeps plans, progress, decisions, and context tied to your project so you — and your AI coding agents — can pick up where you left off without starting over.
 
-Existing tools either live in the browser (lost when the session ends), require a hosted SaaS account, or are generic project managers that do not understand development semantics — phases, evidence, blockers, decisions, handoffs, or context ranking.
+Large AI coding tasks are difficult to track. Plans and completed work get lost between sessions. Context and decisions vanish. Tokens and time are wasted re-explaining the same project. Relay solves this by giving humans, Claude Code, and Codex a persistent local workboard containing plans, cards, progress, decisions, context, and handoffs — all stored on your machine.
 
-## What Relay Does
+<p align="center">
+  <strong>Download Relay, connect your coding agent, and stop restarting large tasks from scratch.</strong>
+</p>
 
-Relay is a **local-first desktop planning system** for software work. It gives AI agents (and humans) a persistent workflow where they can plan, track, and record work without losing state between sessions. All data lives on your machine in the operating system's app-owned data directory.
+---
 
-**How it works:**
+## Downloads
 
-- You create a **board** for a project or initiative
-- You define **phases** and **columns** to organize the work
-- You break the plan into **cards** (tasks, features, bugs, decisions, etc.)
-- You move cards through columns as work progresses
-- You record **activity**, **decisions**, **context**, and **evidence** along the way
-- When you or an AI agent returns, the board provides the current state — no need to re-read the entire project history
-- Agent integrations (Claude Code, Codex) can read and write to boards through hooks and plugins, preserving context across sessions
+Each badge links to the latest GitHub Release where you can find the matching installer for your platform.
+
+<p align="center">
+  <a href="https://github.com/jacobpowaza/Relay/releases/latest">
+    <img src="https://img.shields.io/badge/macOS_Apple_Silicon-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Apple Silicon">
+  </a>
+  <a href="https://github.com/jacobpowaza/Relay/releases/latest">
+    <img src="https://img.shields.io/badge/macOS_Intel-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Intel">
+  </a>
+  <a href="https://github.com/jacobpowaza/Relay/releases/latest">
+    <img src="https://img.shields.io/badge/Windows_x64-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64">
+  </a>
+  <a href="https://github.com/jacobpowaza/Relay/releases/latest">
+    <img src="https://img.shields.io/badge/Windows_ARM64-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows ARM64">
+  </a>
+  <a href="https://github.com/jacobpowaza/Relay/releases/latest">
+    <img src="https://img.shields.io/badge/Linux_AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux AppImage">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/jacobpowaza/Relay/releases">
+    <img src="https://img.shields.io/badge/View_all_releases-555555?style=for-the-badge" alt="View all releases">
+  </a>
+</p>
+
+| Platform | Architecture | File |
+|---|---|---|
+| macOS | Apple Silicon (M1–M4) | `Relay-<version>-arm64.dmg` |
+| macOS | Intel | `Relay-<version>.dmg` |
+| Windows | x64 | `Relay-Setup-<version>-x64.exe` |
+| Windows | ARM64 | `Relay-Setup-<version>-arm64.exe` |
+| Linux | x64 | `Relay-<version>.AppImage` |
+
+<details>
+<summary>macOS Gatekeeper note</summary>
+
+The application is not yet signed with an Apple Developer ID certificate. When you open it for the first time, macOS may show "Relay cannot be opened because the developer cannot be verified." To bypass:
+
+- Right-click (or Ctrl-click) the app and select **Open**, then click **Open** in the dialog.
+- Alternatively, go to **System Settings > Privacy & Security** and click **Open Anyway**.
+
+</details>
+
+<details>
+<summary>Windows SmartScreen note</summary>
+
+The installer is not yet Authenticode-signed. Windows SmartScreen may show a warning. Click **More info** then **Run anyway** to install.
+
+</details>
+
+---
+
+## Plugins
+
+AI agent integrations for Claude Code and Codex are published to the [relay-plugins](https://github.com/jacobpowaza/relay-plugins) repository, which serves as a plugin marketplace for both platforms. This keeps the integrations independently installable without cloning the full Relay monorepo.
+
+```bash
+# Claude Code
+claude plugin marketplace add jacobpowaza/relay-plugins
+claude plugin install relay@relay-plugins
+
+# Codex
+# Follow the install guide in the relay-plugins README
+```
+
+### Install the AI Integrations
+
+Relay integrates with AI coding agents so they can read and write board state automatically. Both integrations follow a **fail-open** design: if Relay is unavailable, the integration does not block the coding session.
+
+### Claude Code (`[RELAY]`)
+
+The Claude Code plugin runs via lifecycle hooks that fire on session start, post-tool-use, pre-compact, and session end.
+
+**Install from the Relay repository:**
+
+```bash
+git clone https://github.com/jacobpowaza/Relay.git
+cd Relay
+
+# First-time setup — copy the entire plugin into Claude Code's marketplace
+# directory. Claude Code auto-discovers plugins here on startup.
+mkdir -p ~/.claude/plugins/marketplaces/relay-local
+cp -R integrations/claude-code/. ~/.claude/plugins/marketplaces/relay-local/
+```
+
+After installing, start a new Claude Code session in a repository.
+
+**Verify it is active:** When you open Claude Code in a repository, a startup message will show one of:
+
+- `[RELAY] Active` — the repo is linked to a board with saved context.
+- `[RELAY] Inactive` — the repo is not linked. Create a board with `/relay-progress create-board`.
+- `[RELAY] Error` — the linked board was not found in Relay's storage.
+
+**Persistent status line:** The startup message only appears once. To keep the Relay indicator visible in Claude Code's footer on every turn, register the status line:
+
+```bash
+# Deploy changes AND register the status line:
+node integrations/scripts/sync-plugins.mjs --install-statusline
+```
+
+The `--install-statusline` flag registers the Relay status indicator in your global
+`~/.claude/settings.json`. Without this flag, `sync-plugins.mjs` deploys plugin code
+but does not modify your settings.
+
+If you prefer to run the installer separately from within your Claude Code plugin directory:
+
+```bash
+# Run from wherever the plugin is installed
+node install-statusline.mjs
+```
+
+This adds a `statusLine` entry to the GLOBAL user scope (`~/.claude/settings.json`). Project-local `.claude/settings.json` files are NOT changed — the global scope applies to all projects.
+
+The footer shows one of:
+
+- `[RELAY] Active · Active card title` — linked and tracking.
+- `[RELAY] Inactive` — not linked.
+- `[RELAY] Disabled` — integration turned off.
+- `[RELAY] Error` — linked board not found.
+
+If another status line is already configured (e.g. Caveman), the installer composes both indicators into a single wrapper script without overwriting the existing command. Run with `--force` to replace it instead.
+
+**Enable or disable** the integration from Relay: open the user menu > Settings > Integrations.
+
+### Codex (`@Relay`)
+
+The Codex integration provides the same capabilities through Codex's plugin system, with an MCP server for real-time board operations.
+
+**Install from the Relay repository:**
+
+```bash
+git clone https://github.com/jacobpowaza/Relay.git
+cd Relay
+
+# First-time setup — copy the entire plugin into Codex's plugin cache
+mkdir -p ~/.codex/plugins/cache/relay-local/relay/0.1.0
+cp -R integrations/codex/. ~/.codex/plugins/cache/relay-local/relay/0.1.0/
+```
+
+**Usage:** Type `/relay` in the Codex prompt:
+
+```
+/relay status              Show linked board summary
+/relay resume              Load resume packet and continue work
+/relay checkpoint          Write a checkpoint before switching tasks
+/relay create-board "..."  Create and link a new board
+```
+
+When MCP is available, Codex uses `relay_status` and `relay_resume` tools directly. Behind the scenes, both Claude Code and Codex integrations use the same `relay-progress.mjs` script and store data in the same local workspace.
+
+**Enable or disable** from Relay: open the user menu > Settings > Integrations.
+
+### Keeping Integrations Updated
+
+After pulling changes to the Relay repository, rebuild and redeploy all installed plugin copies:
+
+```bash
+node integrations/scripts/sync-plugins.mjs
+```
+
+This builds the shared integration core, vendors it into each plugin, then performs a full replacement of every installed plugin file — including plugin manifests (`.*plugin/`), MCP config, hooks, scripts, skills, and commands.
+
+### Usage Example
+
+1. **Start a task** — tell your agent to create a board: "Create a Relay board for adding payment UI."
+2. **Check status** — the agent reads the board and sees the active card, recent context, and next step.
+3. **Record progress** — the agent writes checkpoints as work completes.
+4. **Resume later** — a new session loads the handoff and continues without re-reading the full project.
+
+<details>
+<summary>Advanced CLI commands</summary>
+
+You can drive Relay directly from the Claude Code prompt without hooks:
+
+```sh
+# Show status
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs status --cwd "$PWD"
+
+# Create a board from the original user request
+printf '%s' "$ORIGINAL_USER_REQUEST" |
+  node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+    create-board --cwd "$PWD" --title "$PROJECT_NAME"
+
+# Resume work from a linked board
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs resume --cwd "$PWD"
+
+# Checkpoint progress
+printf '{"summary":"Implemented auth flow","changedFiles":["src/auth.ts"],"progress":75}' |
+  node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+    checkpoint --cwd "$PWD" --card-id "$CARD_ID"
+
+# Create cards, notes, context records, and decisions
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+  create-card --cwd "$PWD" --title "Add login page" --column Ready --tags ui,security
+
+node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
+  record-decision --cwd "$PWD" --title "Use OAuth 2.0" < decision.json
+```
+
+</details>
+
+---
+
+## How It Works
+
+1. **Start a large task** — You or an AI agent creates a Relay board for the project.
+2. **Store the plan** — The detailed implementation plan lives in the board as Markdown.
+3. **Break work into cards** — Phases, columns, and cards organize the work into trackable units.
+4. **Work and update** — Cards move through columns as work progresses. Context, decisions, and evidence are recorded along the way.
+5. **Resume later** — A future session loads a compact handoff (bounded to ~3k tokens) showing active card, recent changes, blockers, and next steps — no need to re-read the full project history.
+
+Relay works without AI agents too. You can create boards, manage cards, track activity, and review decisions entirely through the desktop interface.
+
+### Token-Saving Design
+
+Without Relay, an agent returning to a project often re-reads past conversation logs or the full project plan — consuming tens of thousands of tokens. Relay replaces this with a bounded resume packet that surfaces only what changed and what comes next.
+
+| Technique | Benefit |
+|---|---|
+| Compact handoffs (~300–1000 tokens, capped at ~3000) | Resume packet replaces re-reading full history |
+| Ranked context | Only active decisions, current blockers, and relevant cards are included by default |
+| No duplication | Board captures what was done, not verbatim model reasoning |
+| Explicit retrieval | Agents fetch omitted details on demand instead of receiving everything upfront |
+| Stable across sessions | Handoff from session N carries forward to session N+1 without repeating prior context |
 
 ---
 
@@ -65,72 +285,53 @@ Relay is a **local-first desktop planning system** for software work. It gives A
 
 ## Features
 
-- **Organize** work into directories, linked projects, and boards.
-- **Plan** work with phases, detailed plans (Markdown), decisions, and context records.
-- **Track** cards with status, priority, type, tags, notes, blockers, progress, and completion criteria.
-- **Kanban board** with drag-and-drop columns, card filters, phase grouping, and column management.
-- **Dashboard** with board overview, recent activity, directory navigation, and a "continue working" shortcut.
-- **Git workbench** — review staged/unstaged changes, split changes into multiple focused commits, pre-commit review step that re-checks HEAD before executing, commit history with side-by-side comparison, and push.
-- **Context records** — store categorized context (architecture, current state, decisions, warnings) with confidence levels for future sessions.
-- **Decision log** — record decisions with alternatives, consequences, and status.
-- **Activity timeline** — every meaningful action is recorded with actor, target, and timestamp.
-- **Auto-update** — in-app update center backed by electron-updater with manual check, skip-version, dismiss, and install-and-restart controls.
-- **Single-instance lock** — second launch focuses the running window, no duplicate processes.
-- **macOS menu-bar mode** — hide to the menu bar with background presence, launch at login, and tray controls.
-- **Integration with Claude Code** — plugin with session hooks that identify the repository and emit concise context packets.
-- **Integration with Codex** — plugin with MCP server, session hooks, and skills for context resumption.
-- **Local-only** — all data stays on your machine by default. No account required, no SaaS.
+### Planning and Workboards
+
+- Organize work into directories, linked projects, and boards.
+- Plan with phases, detailed Markdown plans, decisions, and context records.
+- Track cards with status, priority, type, tags, notes, blockers, progress, and completion criteria.
+- Kanban board with drag-and-drop columns, card filters, phase grouping, and column management.
+- Dashboard with board overview, recent activity, directory navigation, and a "continue working" shortcut.
+- Decision log — record decisions with alternatives, consequences, and status.
+- Activity timeline — every meaningful action is recorded with actor, target, and timestamp.
+
+### AI Agent Continuity
+
+- **Claude Code integration** — lifecycle hooks that detect repositories, link boards, and emit concise context packets (`[RELAY] Active`).
+- **Codex integration** — plugin with MCP server, session hooks, and `/relay` slash commands for context resumption.
+- Both integrations follow a fail-open design and are disabled by default until you enable them.
+
+### Git Workflow
+
+- Review staged and unstaged changes.
+- Split changes into multiple focused commits.
+- Pre-commit review step that re-checks HEAD before executing.
+- Commit history with side-by-side comparison.
+- Push from within the app.
+
+### Local Data and Privacy
+
+All data stays on your machine with no account required. See [Data and Privacy](#data-and-privacy) for details.
+
+### Desktop Experience
+
+- Auto-update — in-app update center with manual check, skip-version, dismiss, and install-and-restart.
+- Single-instance lock — second launch focuses the running window.
+- macOS menu-bar mode — hide to the menu bar with background presence, launch at login, and tray controls.
 
 ---
 
-## Downloads
+## Data and Privacy
 
-[Download the latest release](https://github.com/jacobpowaza/Relay/releases) for your platform.
+Relay is local-first. All data is stored on your machine in the operating system's application data directory. No account, registration, or internet connection is required to use the desktop app.
 
-### macOS
-
-| Architecture | File |
-|---|---|
-| Apple Silicon (M1/M2/M3/M4) | `Relay-<version>-arm64.dmg` |
-| Intel | `Relay-<version>.dmg` |
-
-**Gatekeeper note:** The application is not yet signed with an Apple Developer ID certificate. When you open it for the first time, macOS may show "Relay cannot be opened because the developer cannot be verified." To bypass:
-- Right-click (or Ctrl-click) the app and select **Open**
-- Click **Open** in the dialog
-
-Alternatively, go to **System Settings > Privacy & Security** and click **Open Anyway**.
-
-### Windows
-
-| Architecture | File |
-|---|---|
-| x64 | `Relay-Setup-<version>-x64.exe` |
-| ARM64 | `Relay-Setup-<version>-arm64.exe` |
-
-**SmartScreen note:** The installer is not yet Authenticode-signed. Windows SmartScreen may show a warning. Click **More info** then **Run anyway** to install.
-
-### Linux
-
-| Architecture | File |
-|---|---|
-| x64 | `Relay-<version>.AppImage` |
-
-Make the AppImage executable: `chmod +x Relay-*.AppImage`
-
----
-
-## Data And Privacy
-
-- All data is stored locally on your machine.
-- No account, registration, or internet connection is required.
 - No telemetry, analytics, or usage data is collected.
-- No data is sent to any external server unless you configure an API endpoint.
-- Application data is stored in the OS app data directory (see paths below).
-- Integration plugin config is stored under `~/.relay/integrations/config.json`.
+- No data is sent to any external server unless you configure an optional API endpoint.
 - Claude Code and Codex integrations are disabled by default until you enable them.
 - The application never creates sample boards or fake activity — new installations start empty.
 
-### Storage Locations
+<details>
+<summary>Storage paths</summary>
 
 | Data | Path |
 |---|---|
@@ -146,147 +347,63 @@ Make the AppImage executable: `chmod +x Relay-*.AppImage`
 | Windows | `%APPDATA%/Relay/` |
 | Linux | `~/.config/Relay/` |
 
----
-
-## How It Works
-
-### Boards and Cards
-
-A **board** represents a project or initiative. Each board contains:
-
-- **Phases** — logical groups of work (e.g., "Foundation", "Core Features", "Polish")
-- **Columns** — status lanes (e.g., Backlog, Ready, In Progress, Review, Verified)
-- **Cards** — individual work items with type, priority, tags, description, and progress
-- **Plan** — a detailed Markdown document for the full implementation plan
-- **Context** — categorized memory records with confidence levels
-- **Decisions** — structured decision log with alternatives and consequences
-- **Activity** — chronological audit trail of all meaningful actions
-
-### Agent Integrations
-
-Relay provides integrations for AI coding agents so they can read and write board state automatically. Both integrations follow a **fail-open** design: if Relay is unavailable, the integration does not block the coding session.
-
-#### Claude Code (`/relay-progress`)
-
-The Claude Code integration runs automatically via lifecycle hooks:
-
-- **Session start** — detects the repository, checks for a linked board, and prints a compact `[RELAY] Active` summary with board name, active card, recent context, and branch state
-- **During work** — a checkpoint reminder fires every 20 minutes (and before context compaction) prompting you to record progress
-- **Session end** — saves a structured handoff for the next session
-
-You can also drive Relay manually from the Claude Code prompt:
-
-```sh
-# Show status for the current directory
-node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs status --cwd "$PWD"
-
-# Create a board from the original user request
-printf '%s' "$ORIGINAL_USER_REQUEST" |
-  node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
-    create-board --cwd "$PWD" --title "$PROJECT_NAME"
-
-# Resume work from a linked board (≤3k token handoff)
-node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs resume --cwd "$PWD"
-
-# Checkpoint progress
-printf '{"summary":"Implemented auth flow","changedFiles":["src/auth.ts"],"tests":["auth.test.ts"],"progress":75}' |
-  node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
-    checkpoint --cwd "$PWD" --card-id "$CARD_ID"
-
-# Create cards, notes, context records, and decisions
-node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
-  create-card --cwd "$PWD" --title "Add login page" --column Ready --tags ui,security
-
-node ~/.claude/plugins/cache/relay-local/relay-progress/0.1.0/scripts/relay-progress.mjs \
-  record-decision --cwd "$PWD" --title "Use OAuth 2.0" < decision.json
-```
-
-When Claude Code auto-detects a continuation request ("continue", "resume", "keep working"), it automatically resumes the existing board — no manual command needed.
-
-#### Codex (`@Relay`)
-
-The Codex integration provides the same capabilities through Codex's plugin system with an MCP server for real-time board operations:
-
-```sh
-# Slash commands (type /relay in the Codex prompt):
-/relay status              # Show linked board summary
-/relay resume              # Load resume packet and continue work
-/relay checkpoint          # Write a checkpoint before switching tasks
-/relay create-board "Add payment UI"   # Create and link a new board
-```
-
-When MCP is available, Codex uses `relay_status` and `relay_resume` tools directly. Behind the scenes, both integrations use the same `relay-progress.mjs` script and store data in the same local workspace.
-
-#### How It Saves Tokens
-
-Relay minimizes AI agent context consumption in several ways:
-
-| Technique | Impact |
-|---|---|
-| **Compact handoffs** (~300–1000 tokens) | A resume packet replaces re-reading full conversation history (potentially 10k–100k+ tokens) |
-| **Ranked context** | Only active decisions, current blockers, and relevant cards are included by default |
-| **No duplication** | The board captures what the agent did, not verbatim model reasoning — eliminating the "hidden monologue" token tax |
-| **Explicit retrieval** | Agents fetch omitted details on demand instead of receiving everything preemptively |
-| **Stable across sessions** | A handoff from session N carries forward to session N+1 without repeating prior context |
-
-Without Relay, an agent returning to a project often re-reads past conversation logs or the full project plan — tens of thousands of tokens. With Relay, the agent loads a bounded resume packet (~3k tokens max), picks up the active card, and continues working.
-
-#### Typical Workflow
-
-1. **Start a large task** — Claude Code / Codex creates a Relay board with phases and cards from the raw user request
-2. **Work through cards** — The agent picks cards, implements them, and moves them through columns
-3. **Checkpoint periodically** — Before context compaction, session end, or switching tasks, the agent writes a checkpoint
-4. **Resume later** — A new session loads the handoff, sees where work left off, and continues without re-reading the project
-5. **Track decisions** — Architecture decisions are recorded in the board and resurfaced in future sessions, preventing re-deliberation
+</details>
 
 ---
 
-## Prerequisites
+## Developer Documentation
+
+### Prerequisites
 
 - **Node.js** 22 or newer
-- **pnpm** 11
+- **pnpm** 11 (install: `npm install -g pnpm@11`)
 - macOS, Windows, or Linux
 
-## Development Setup
+### Development Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/jacobpowaza/Relay.git
 cd Relay
-
-# Install dependencies
 pnpm install
+```
 
-# Start the desktop app in development mode
+Start the desktop app in development mode:
+
+```bash
 pnpm app:dev
 ```
 
-This starts the Next.js renderer dev server and launches the Electron app connected to it. The renderer automatically uses an available port (default: 4317, fallback: 4318+ if taken).
+This starts the Next.js renderer dev server and launches the Electron app connected to it. The renderer automatically uses an available port (default: 4317, fallback: 4318+ if taken). The API server follows the same pattern, defaulting to 4318 and scanning forward.
+
+Load optional example data:
+
+```bash
+mkdir -p "$HOME/Library/Application Support/Relay/relay-data"
+cp docs/examples/mock-workspace.json "$HOME/Library/Application Support/Relay/relay-data/workspace.json"
+pnpm app:dev
+```
 
 ### Environment Configuration
 
-Copy `.env.example` to `.env` in the project root:
+The environment file is optional for local desktop development. Copy `.env.example` to `.env` for a starting point.
 
-```bash
-cp .env.example .env
-```
-
-The environment file is **optional** for local desktop development. The desktop app stores everything locally and does not require a database or API.
+<details>
+<summary>Environment variables</summary>
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `APP_ORIGIN` | No | `http://localhost:4317` | Origin of the renderer frontend (for CORS) |
-| `API_ORIGIN` | No | `http://localhost:4318` | Where the API server listens |
-| `DATABASE_URL` | No | — | PostgreSQL connection string (for optional sync) |
-| `BETTER_AUTH_SECRET` | No | — | Auth signing secret (for optional sync) |
-| `BETTER_AUTH_URL` | No | — | Auth URL (for optional sync) |
-| `NEXT_PUBLIC_API_ORIGIN` | No | — | API origin exposed to browser (for optional sync) |
-| `OBJECT_STORAGE_ENDPOINT` | No | `http://localhost:9000` | S3-compatible storage endpoint (for optional sync) |
+| `APP_ORIGIN` | No | `http://localhost:4317` | Origin of the renderer frontend |
+| `API_ORIGIN` | No | `http://localhost:4318` | API server listen address |
+| `DATABASE_URL` | No | — | PostgreSQL connection string (optional sync) |
+| `BETTER_AUTH_SECRET` | No | — | Auth signing secret (optional sync) |
+| `BETTER_AUTH_URL` | No | — | Auth URL (optional sync) |
+| `NEXT_PUBLIC_API_ORIGIN` | No | — | API origin exposed to browser (optional sync) |
+| `OBJECT_STORAGE_ENDPOINT` | No | `http://localhost:9000` | S3-compatible storage endpoint (optional sync) |
 | `OBJECT_STORAGE_ACCESS_KEY` | No | — | Storage access key |
 | `OBJECT_STORAGE_SECRET_KEY` | No | — | Storage secret key |
 | `OBJECT_STORAGE_BUCKET` | No | — | Storage bucket name |
 
-Without `.env`, the desktop app operates in fully local mode with no external dependencies.
+</details>
 
 ### Infrastructure (Optional)
 
@@ -303,19 +420,7 @@ pnpm --filter @relay/database db:migrate
 pnpm api:dev
 ```
 
-### Load Example Data
-
-Relay starts empty. To preview a populated workspace:
-
-```bash
-mkdir -p "$HOME/Library/Application Support/Relay/relay-data"
-cp docs/examples/mock-workspace.json "$HOME/Library/Application Support/Relay/relay-data/workspace.json"
-pnpm app:dev
-```
-
----
-
-## Available Scripts
+### Available Scripts
 
 | Script | Description |
 |---|---|
@@ -330,7 +435,7 @@ pnpm app:dev
 | `pnpm test:watch` | Run tests in watch mode |
 | `pnpm check` | Run lint + typecheck + test + build (CI gate) |
 
-## Build
+### Build and Packaging
 
 ```bash
 # Build all packages and the web renderer
@@ -342,30 +447,10 @@ pnpm app:package
 
 Packaging uses [electron-builder](https://www.electron.build/) configured in `apps/desktop/electron-builder.yml`. Artifacts are written to `apps/desktop/release/`.
 
-### Dynamic Port Selection
+When running from a packaged build, the application does not require `.env` configuration. On first launch it creates the workspace data directory, initializes an empty workspace, generates default settings, and uses safe defaults for all configuration values.
 
-The API server does not assume a fixed port. On startup:
-
-1. It attempts to bind to the preferred port from `API_PORT` env or the default **4318**
-2. If that port is in use, it tries the next port (4319, 4320, etc.) up to 20 attempts
-3. The selected port is logged to the console
-
-The renderer dev server (`pnpm dev`) follows the same pattern, defaulting to **4317** and scanning forward until it finds an available port.
-
-### Packaged Build Configuration
-
-When running from a packaged build, the application does **not** require `.env` configuration. On first launch it:
-
-- Creates the workspace data directory under the OS application data directory
-- Initializes an empty workspace
-- Generates default app settings
-- Uses safe defaults for all configuration values
-
-The optional API server (`pnpm api:dev` or `pnpm api:start`) reads environment variables for configuration. The desktop app itself runs without any external services.
-
----
-
-## Project Architecture
+<details>
+<summary>Project architecture</summary>
 
 ```text
 relay/
@@ -391,95 +476,38 @@ relay/
     └── compose.yaml      Local dev infrastructure (PostgreSQL, MinIO)
 ```
 
-### Desktop App (Electron)
+**Desktop App (Electron)** — Owns all local file access. The renderer communicates through a context-isolated preload bridge.
 
-The Electron main process (`apps/desktop/src/`) owns all local file access. The renderer (Next.js static export) communicates through a **context-isolated preload bridge** with sandboxed Node.js. The preload exposes a narrow `window.relayDesktop` API for workspace data, Git operations, update management, and app settings.
+**Web Renderer (Next.js)** — Static App Router export (`output: "export"`) running in the Electron renderer process. Uses React, CSS modules, and Lucide icons.
 
-### Web Renderer (Next.js)
+**Core Domain** — `packages/domain/` contains pure business logic: entity types, state machines, ranking algorithms, and evidence rules.
 
-The renderer is a static Next.js App Router export (`output: "export"`) that runs entirely in the Electron renderer process. It uses React, CSS modules (`globals.css`), and Lucide icons. There is no web server — the static HTML/JS/CSS is served directly from the filesystem via `window.loadFile()`.
+**Integrations** — Fail-open design: each plugin identifies the Git repository, checks for a linked board, emits a concise context packet, records checkpoints, and produces a handoff on session end.
 
-### Core Domain
+</details>
 
-The `packages/domain/` package contains pure business logic: entity types, state machines, ranking algorithms, context prioritization, and evidence rules. It has no runtime dependencies beyond TypeScript.
-
-### Integrations
-
-Agent integrations follow a **fail-open** design: if Relay is unavailable, the integration does not block the coding session. Each integration plugin:
-
-- Identifies the local Git repository on session start
-- Checks if the repository is linked to a Relay board
-- Emits a concise context packet (not the full board) as additional context
-- Records checkpoints during the session
-- Produces a structured handoff on session end
-
----
-
-## Environment Configuration
-
-The repository includes `.env.example` with the following variables:
-
-```
-APP_ORIGIN=http://localhost:4317
-API_ORIGIN=http://localhost:4318
-DATABASE_URL=postgres://relay@localhost:5432/relay
-BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters
-BETTER_AUTH_URL=http://localhost:4318
-NEXT_PUBLIC_API_ORIGIN=http://localhost:4318
-OBJECT_STORAGE_ENDPOINT=http://localhost:9000
-OBJECT_STORAGE_ACCESS_KEY=relay
-OBJECT_STORAGE_SECRET_KEY=replace-in-local-env
-OBJECT_STORAGE_BUCKET=relay
-```
-
-**Required for desktop-only usage:** None. The desktop app works without any environment variables.
-
-**Required for optional API/sync:** `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`. The database and object storage variables are only needed if you run the server components.
-
-**Packaged builds** generate the following automatically on first launch:
-- A secure random secret is generated if authentication is configured
-- Default settings are written to the app data directory
-- The workspace file is initialized as an empty workspace
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Run `pnpm check` to verify lint, types, tests, and build
-5. Commit your changes
-6. Push and open a Pull Request
-
-All contributions must be licensed under AGPL-3.0.
-
----
-
-## Release Process
+### Release Process
 
 Releases are built and published through GitHub Actions. To trigger a release:
 
-1. Update the version in `package.json` (root and `apps/desktop/package.json`)
-2. Tag the commit: `git tag v<version>` (e.g., `v0.2.0`)
-3. Push the tag: `git push origin v<version>`
-4. The release workflow builds and publishes artifacts automatically
+1. Update the version in `package.json` (root and `apps/desktop/package.json`).
+2. Tag the commit: `git tag v<version>` (e.g., `v0.2.0`).
+3. Push the tag: `git push origin v<version>`.
+4. The release workflow builds and publishes artifacts automatically.
 
-### Manual Build
+**Manual package:**
 
 ```bash
-# Build all dependencies
 pnpm build
-
-# Package the desktop app (unsigned, local only)
 pnpm app:package
 ```
 
 Artifacts are written to `apps/desktop/release/`.
 
-### macOS Signing
+<details>
+<summary>Code signing</summary>
 
-For signed and notarized builds, set these environment variables:
+**macOS:** For signed and notarized builds, set these environment variables before packaging:
 
 ```
 CSC_LINK=/path/to/DeveloperIDApplication.p12
@@ -489,64 +517,73 @@ APPLE_APP_SPECIFIC_PASSWORD=****-****-****-****
 APPLE_TEAM_ID=XXXXXXXXXX
 ```
 
-### Windows Signing
-
-For Authenticode-signed installers:
+**Windows:** For Authenticode-signed installers:
 
 ```
 CSC_LINK=/path/to/codesign.pfx
 CSC_KEY_PASSWORD=********
 ```
 
----
+</details>
 
-## Limitations
+### Contributing
 
-- **No server-side sync yet:** Boards are stored locally only. Cross-device sync and team collaboration are future work.
-- **No authentication in desktop mode:** The desktop app uses a "local user" identity. Authentication is only present in the optional API component.
-- **No hosted SaaS:** There is no cloud-hosted version. You run the desktop app on your machine.
-- **Single-user per instance:** The desktop app is designed for one user. Multi-user boards require the API.
-- **No mobile app:** Relay runs on desktop only (macOS, Windows, Linux).
-- **Unsigned installers:** macOS and Windows builds are unsigned by default. Users must bypass security warnings until signing is configured.
-- **Auto-update requires signed builds:** electron-updater verifies code signatures. Unsigned builds cannot auto-update in production.
-- **Markdown-only plans:** The plan editor is a textarea with Markdown. There is no rich-text or WYSIWYG editor.
-- **Persistence limit:** Workspace files are capped at 10 MB. Very large boards may require future optimization.
+1. Fork the repository.
+2. Create a feature branch: `git checkout -b feature/my-feature`.
+3. Make your changes.
+4. Run `pnpm check` to verify lint, types, tests, and build.
+5. Commit your changes.
+6. Push and open a Pull Request.
 
----
+All contributions must be licensed under AGPL-3.0.
 
-## Roadmap
-
-- **Server-side sync** — boards shared across devices and team members
-- **Signed installers** — macOS notarization and Windows Authenticode signing
-- **Auto-update infrastructure** — production auto-update channel
-- **Authentication** — user accounts with workspace membership
-- **API stabilization** — stable API for third-party integrations
-- **Improved context ranking** — better relevance scoring for agent context packets
-- **Template boards** — reusable board templates for common project types
-- **GitHub integration** — import issues, create PRs from cards, link commits
-- **Search** — full-text search across boards, cards, and context
-- **Performance improvements** — virtualized card lists for large boards
-- **Dark mode refinements** — complete dark mode coverage (currently "system" aware with basic support)
-- **Plugin marketplace** — user-contributed integrations and tools
-
----
-
-## Troubleshooting
+### Troubleshooting
 
 | Problem | Solution |
 |---|---|
 | macOS "cannot be opened because the developer cannot be verified" | Right-click the app and select Open, or go to System Settings > Privacy & Security and click Open Anyway |
 | Windows SmartScreen blocks installation | Click "More info" then "Run anyway" |
-| App won't start (port conflict) | Kill the conflicting process or set `API_PORT` / `RELAY_DEV_SERVER_URL` environment variables to use different ports |
-| Workspace data is missing | Check `~/Library/Application Support/Relay/relay-data/workspace.json` (macOS) or the equivalent path on your OS |
-| Integration plugins not working | Ensure the integration is enabled in Relay settings: open the user menu > Settings > Integrations |
-| Renderer shows blank screen | Check the Developer Tools console (Cmd+Option+I in dev mode). The renderer should load the static export from `index.html` |
+| App won't start (port conflict) | Kill the conflicting process or set `API_PORT` / `RELAY_DEV_SERVER_URL` to use different ports |
+| Workspace data is missing | Check the storage path for your OS (see Data and Privacy section) |
+| Integration plugins not working | Ensure the integration is enabled in Relay: open the user menu > Settings > Integrations |
+| Renderer shows blank screen | Open Developer Tools (Cmd+Option+I in dev mode) and check for errors |
 | Git workbench shows no changes | Ensure the board is linked to a local Git repository directory |
-| Auto-update says "Updates are delivered in packaged builds" | This is expected in development mode. Packaged builds can check for updates |
+| Auto-update says "Updates are delivered in packaged builds" | Expected in development mode. Packaged builds can check for updates |
 
----
+<details>
+<summary>Limitations</summary>
 
-## Acknowledgements
+- **No server-side sync yet** — boards are stored locally only.
+- **No authentication in desktop mode** — authentication is only present in the optional API component.
+- **No hosted SaaS** — there is no cloud-hosted version.
+- **Single-user per instance** — the desktop app is designed for one user.
+- **No mobile app** — Relay runs on desktop only (macOS, Windows, Linux).
+- **Unsigned installers** — macOS and Windows builds are unsigned by default.
+- **Auto-update requires signed builds** — unsigned builds cannot auto-update.
+- **Markdown-only plans** — no rich-text or WYSIWYG editor.
+- **10 MB workspace limit** — workspace files are capped at 10 MB.
+
+</details>
+
+<details>
+<summary>Roadmap</summary>
+
+- Server-side sync for boards shared across devices and team members
+- Signed installers (macOS notarization, Windows Authenticode)
+- Production auto-update channel
+- User accounts with workspace membership
+- Stable API for third-party integrations
+- Improved context ranking for agent packets
+- Template boards for common project types
+- GitHub integration (import issues, create PRs from cards, link commits)
+- Full-text search across boards, cards, and context
+- Performance improvements for large boards
+- Dark mode refinements
+- Plugin marketplace for community integrations
+
+</details>
+
+### Acknowledgements
 
 - [electron-builder](https://www.electron.build/) — cross-platform packaging
 - [electron-updater](https://github.com/electron-userland/electron-builder/tree/master/packages/electron-updater) — auto-update support
@@ -558,8 +595,8 @@ CSC_KEY_PASSWORD=********
 - [Lucide](https://lucide.dev/) — open-source icons
 - [Geist](https://vercel.com/font) — UI font family
 
-## License
+### License
 
-[AGPL-3.0](LICENSE) &mdash; Relay is free software. See `LICENSE` for details.
+[AGPL-3.0](LICENSE) — Relay is free software. See `LICENSE` for details.
 
 If you find Relay useful, consider [donating via Venmo](https://venmo.com/u/jacobpowaza) to help fund future development.

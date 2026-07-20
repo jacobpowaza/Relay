@@ -2,11 +2,69 @@ appId: com.relay.desktop
 productName: Relay
 directories:
   output: release
+
 files:
-  - src/**
+  # Electron main process files (all 12 .cjs modules)
+  - src/main.cjs
+  - src/preload.cjs
+  - src/workspace-storage.cjs
+  - src/git-workflow.cjs
+  - src/canonical-path.cjs
+  - src/platform-service.cjs
+  - src/semver.cjs
+  - src/app-settings.cjs
+  - src/background-service.cjs
+  - src/tray-service.cjs
+  - src/updater-service.cjs
+  - src/diagnostics-service.cjs
+
+  # App metadata (name, version, license)
   - package.json
+
+  # Icons (used by dock, tray, window, installer)
+  - build/icon.png
+  - build/icon.icns
+
+  # Renderer (Next.js static export loaded by main.cjs as index.html)
   - from: ../web/out
     to: renderer
+    filter:
+      - "**/*"
+      - "!__next.*.txt"
+      - "!*.txt"
+      - "!_not-found/**"
+
+extraResources:
+  # Claude Code integration plugin (synced to ~/.claude/plugins/ by sync-plugins.mjs)
+  - from: ../../integrations/claude-code
+    to: integrations/claude-code
+    filter:
+      - ".claude-plugin/plugin.json"
+      - "core/*.js"
+      - "hooks/*.mjs"
+      - "scripts/relay-progress.mjs"
+      - "scripts/statusline.mjs"
+      - "scripts/canonical-path.mjs"
+      - "scripts/install-statusline.mjs"
+      - "skills/progress/SKILL.md"
+      - "package.json"
+
+  # Codex integration plugin (synced to ~/.codex/plugins/ by sync-plugins.mjs)
+  - from: ../../integrations/codex
+    to: integrations/codex
+    filter:
+      - ".codex-plugin/plugin.json"
+      - ".mcp.json"
+      - "hooks.json"
+      - "core/*.js"
+      - "hooks/*.mjs"
+      - "scripts/relay-progress.mjs"
+      - "scripts/canonical-path.mjs"
+      - "mcp/relay-mcp.mjs"
+      - "commands/relay.md"
+      - "skills/progress/SKILL.md"
+      - "package.json"
+
 asar: true
 
 # Auto-update feed. electron-builder embeds this as app-update.yml inside the
