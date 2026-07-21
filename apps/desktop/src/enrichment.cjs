@@ -35,7 +35,19 @@ const AGENTS = {
       { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
     ],
     defaultModel: "claude-haiku-4-5-20251001",
-    buildArgs: (/** @type {string} */ model) => ["-p", "--model", model, "--output-format", "json"],
+    buildArgs: (/** @type {string} */ model) => [
+      "-p", "--model", model, "--output-format", "json",
+      // Enrichment is pure summarization: it needs the model, not a coding
+      // agent. Booting a default session loaded the user's settings, plugins,
+      // skills, hooks and MCP servers into every batch — measured at 34,322
+      // context tokens to answer a 10-token prompt. These flags cut that to
+      // 9,393 (-73%, $0.0469 -> $0.0109 per batch) with identical output.
+      "--setting-sources", "",
+      "--strict-mcp-config",
+      "--disable-slash-commands",
+      // No file access needed; the excerpts are already in the prompt.
+      "--disallowed-tools", "Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebSearch", "Task",
+    ],
     // Verified against claude 2.0 live: the prompt is accepted on stdin and the
     // reply text lands in `result` on a single JSON object printed to stdout.
     extractText: (/** @type {string} */ stdout) => {
@@ -77,8 +89,16 @@ const AGENTS = {
   },
 };
 
-/** Files per agent call. Larger batches amortize the prompt but risk truncation. */
-const BATCH_SIZE = 12;
+/**
+ * Files per agent call. Larger batches amortize the prompt but risk truncation.
+ *
+ * Each spawn pays a fixed ~9.4k tokens of system context no matter how little
+ * it is asked to do, so the batch size is what decides cost per file: at 12 the
+ * fixed overhead was ~780 tokens/file, at 30 it is ~310. Held at 30 because the
+ * reply is one JSON object per file and long replies are where truncation and
+ * dropped entries start showing up.
+ */
+const BATCH_SIZE = 30;
 /** Chars of each file sent for summarization. Whole files blow the budget fast. */
 const EXCERPT_CHARS = 1600;
 
