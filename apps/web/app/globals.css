@@ -1769,6 +1769,7 @@ textarea:focus-visible {
 .task-card { width: 100%; min-width: 0; max-width: 100%; position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-solid); box-shadow: 0 1px 2px var(--shadow-color); animation: card-enter 230ms var(--ease-out-quint) both; transition: transform 150ms var(--ease-out-quart), border-color 150ms ease, box-shadow 150ms var(--ease-out-quart); }
 .task-card:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: 0 8px 18px var(--shadow-color); }
 .task-card:active { transform: translateY(-1px) scale(0.995); }
+.task-card.dragging { opacity: 0.45; transform: scale(0.97); border-color: var(--accent-border); border-style: dashed; }
 .task-card.blocked { border-color: var(--danger-border); }
 .task-card.archived {
   border-style: dashed;
@@ -4081,3 +4082,84 @@ textarea:focus-visible {
 }
 .update-popup-actions-secondary,
 .update-popup-actions-primary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* --- Discovery View ------------------------------------------------------ */
+
+.discovery-view { width: min(1000px, calc(100% - 38px)); margin: 0 auto; padding: 24px 0 55px; }
+.discovery-actions { display: flex; gap: 8px; align-items: center; }
+.discovery-scanning { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 40px 0; color: var(--muted); font-size: 12px; }
+.discovery-summary { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 18px; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--panel); align-items: center; }
+.discovery-stat { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.discovery-stat strong { font-size: 14px; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.discovery-stat svg { color: var(--muted); }
+.changed-text { color: var(--warning); font-weight: 650; }
+.current-text { color: var(--success); font-weight: 650; }
+.new-text { color: var(--accent); }
+.stale-text { color: var(--danger); }
+.discovery-toolbar { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; }
+.discovery-search { flex: 1; }
+
+.discovery-table-header,
+.discovery-row {
+  display: grid;
+  grid-template-columns: 2fr 3fr 80px 90px 80px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  font-size: 11px;
+}
+.discovery-table-header { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 8px; letter-spacing: 0.03em; border-bottom: 1px solid var(--line); margin-bottom: 2px; }
+.discovery-row {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+  color: var(--ink);
+  background: transparent;
+}
+.discovery-row:hover { background: var(--surface-hover); border-color: var(--line); }
+.discovery-row:active { transform: scale(0.995); }
+.discovery-col-file { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.discovery-col-file svg { flex-shrink: 0; color: var(--muted); }
+.discovery-col-purpose { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.discovery-col-modified,
+.discovery-col-discovered { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 10px; }
+.discovery-col-status { display: flex; align-items: center; gap: 5px; font-size: 9px; text-transform: capitalize; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.status-dot.tone-green { background: var(--success); }
+.status-dot.tone-orange { background: var(--warning); }
+.status-dot.tone-blue { background: var(--accent); }
+.status-dot.tone-gray { background: var(--muted); }
+.status-current { color: var(--success); }
+.status-changed { color: var(--warning); }
+.status-new { color: var(--accent); }
+.status-stale { color: var(--muted); }
+.status-never { color: var(--muted-strong); }
+
+.discovery-features { display: grid; gap: 9px; }
+.discovery-features .decision-card { grid-template-columns: 1fr; min-height: auto; }
+.discovery-feature-header { display: flex; align-items: flex-start; gap: 12px; }
+.discovery-feature-header svg { margin-top: 1px; flex-shrink: 0; color: var(--accent); }
+.discovery-feature-header h3 { margin: 0; font-size: 13px; text-transform: capitalize; }
+.discovery-feature-header p { margin: 3px 0 0; color: var(--muted); font-size: 9px; }
+.feature-file-count { margin-left: auto; font-size: 9px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.feature-files { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+
+.discovery-card-modal { width: min(560px, calc(100vw - 48px)); }
+.discovery-card-body { display: grid; gap: 14px; margin-top: 16px; }
+.discovery-card-section .field-label { display: block; margin-bottom: 6px; font-size: 8px; font-weight: 750; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.discovery-card-section p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--foreground); }
+.discovery-card-meta { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 10px; color: var(--muted); }
+.discovery-card-meta > div { display: flex; align-items: center; gap: 4px; }
+.confidence-badge { padding: 2px 8px; border-radius: 5px; font-size: 9px; font-weight: 650; }
+.confidence-badge.high { color: var(--success); background: var(--success-soft); }
+.confidence-badge.medium { color: var(--warning); background: var(--warning-soft); }
+.confidence-badge.low { color: var(--muted); background: var(--group); }
+.related-file-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.related-file-list li { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
+.related-file-list li svg { flex-shrink: 0; color: var(--muted-strong); }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 800ms linear infinite; }

@@ -61,4 +61,24 @@ contextBridge.exposeInMainWorld("relayDesktop", {
   },
   /** @param {unknown} workspace */
   saveWorkspace: (workspace) => ipcRenderer.invoke("relay:workspace:save", workspace),
+  /** @param {{ repoPath: string; force?: boolean; discoveredBy?: string }} input */
+  startDiscovery: (input) => ipcRenderer.invoke("relay:discovery:start", input),
+  /** @param {{ repoPath: string }} input */
+  getDiscovery: (input) => ipcRenderer.invoke("relay:discovery:get", input),
+  /** @param {{ repoPath: string }} input */
+  getDiscoveryDiff: (input) => ipcRenderer.invoke("relay:discovery:diff", input),
+  /** @param {{ repoPath: string; filePaths: string[]; discoveredBy?: string }} input */
+  updateDiscoveryFiles: (input) => ipcRenderer.invoke("relay:discovery:update", input),
+  getDiscoveryAgents: () => ipcRenderer.invoke("relay:discovery:agents"),
+  /** @param {{ repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }} input */
+  enrichDiscovery: (input) => ipcRenderer.invoke("relay:discovery:enrich", input),
+  /** @param {{ repoPath: string }} input */
+  cancelDiscoveryEnrichment: (input) => ipcRenderer.invoke("relay:discovery:cancel", input),
+  /** @param {(progress: unknown) => void} callback */
+  onDiscoveryProgress: (callback) => {
+    /** @type {(_event: Electron.IpcRendererEvent, progress: unknown) => void} */
+    const listener = (_event, progress) => callback(progress);
+    ipcRenderer.on("relay:discovery:progress", listener);
+    return () => ipcRenderer.removeListener("relay:discovery:progress", listener);
+  },
 });

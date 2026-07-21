@@ -47,7 +47,7 @@ instead of writing repository-local state:
 ```
 
 When the user gives a specific task to track, create a NEW board for it (this is
-the default):
+the default). Pipe the full original user request:
 
 ```sh
 /relay create-board "$PROJECT_OR_FEATURE_NAME"
@@ -77,8 +77,8 @@ Initial card generation is automatic based on request complexity:
 
 Cards use distinct phase names (Foundation, Updates, macOS, Windows, Performance,
 Testing, Documentation, etc.) — never multiple "Planning" groups. The full
-original prompt is saved. Initial card creation is batched into a single timeline
-event.
+original prompt is saved in `board.originalPrompt` and the plan in `board.plan`.
+Initial card creation is batched into a single timeline event.
 
 To explicitly continue a board by ID:
 ```sh
@@ -103,6 +103,34 @@ Use the Relay flow commands for context building instead of free-form files:
 /relay checkpoint
 /relay repair-board
 ```
+
+Move cards as work progresses — when you start a card, move it to "In Progress";
+when you finish, move it to "Needs Review" or "Verified". Update progress
+description to reflect current state:
+
+```sh
+/relay move-card --card-id "$CARD_ID" --column "In Progress"
+/relay move-card --card-id "$CARD_ID" --column "Needs Review" --progress "Implemented with tests"
+/relay update-progress --card-id "$CARD_ID" --progress "Core logic done, tests passing"
+/relay add-note --card-id "$CARD_ID" "Decision: use composable helpers"
+/relay add-note --card-id "$CARD_ID" "Blocker: need API key for auth test"
+```
+
+Create cards for subtasks discovered during work, add context entries for
+durable facts, and record decisions explicitly:
+
+```sh
+/relay create-card --title "Add error handling" --column Backlog --tags reliability
+/relay record-context --title "Auth flow" --category "Current state"
+/relay record-decision --title "Use SQLite over JSON" --status accepted
+```
+
+Use `system` actor for lifecycle events (board created, checkpoint saved) that
+aren't attributable to a specific user message or agent action. Use
+`$RELAY_AGENT_NAME` (set automatically) for agent-initiated actions.
+
+When resuming a session, move the active card to "In Progress" before starting
+work, and move it to "Needs Review" when the session ends if work is incomplete.
 
 Repair-board merges duplicate phases, deduplicates timeline entries, and removes
 generic cards. Run it when the board has structural issues from older sessions.
@@ -153,6 +181,36 @@ boards, local fallback plans, or checkpoint files in the current repository.
 Use the plugin command above to create/link a real Relay board in app-owned
 storage, or ask the user before proceeding. Repository scratch files are not
 Relay boards.
+
+## Token efficiency in practice
+
+- **Don't re-read the board after every mutation** — if you just created a card
+  and the command returned `{"ok":true}`, don't read the board to confirm it's
+  there.
+- **Don't re-read the repo you're already in** — you already know the file
+  layout, architecture, and terminology from the current session. The discovery
+  context at session start gives you the summary; use it to verify specific
+  files, not to re-explore.
+- **Use stable IDs** — pass `--task-id` / `--board-id` / `--card-id` instead of
+  searching by title every time.
+- **Use content hashes** — relay-progress.mjs deduplicates timeline entries and
+  notes by content hash. Avoid writing the same note twice.
+- **Batch related changes** — move a card and add a note in separate calls (the
+  tools don't batch), but avoid re-requesting the full workspace state between
+  them.
+- **Write short structured activity entries** — prefer "Moved to In Progress"
+  over "I have moved the card titled 'Add error handling' from the Backlog
+  column to the In Progress column because I am now working on it."
+- **Group activity by card** — if you move 3 cards in quick succession, use a
+  single concise activity line like "Moved cards: Add error handling → In
+  Progress, Fix auth → Needs Review, Write tests → In Progress" instead of
+  three separate entries.
+- **Observe MAX_CONTEXT_ENTRIES (30)** — keep context entries focused and
+  prune stale ones. Don't append a new context entry every time you discover
+  something; consolidate related facts.
+- **Observe MAX_RESUME_TOKENS (3,000)** — keep checkpoints and resume context
+  under the budget. A checkpoint that exceeds 3K estimated tokens will be
+  truncated. Prefer brief evidence bullets over prose paragraphs.
 
 If a checkpoint cannot be uploaded, save only plugin-owned local queue data under
 `~/.relay/integrations/` when available, continue safe coding work, and do not

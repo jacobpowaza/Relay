@@ -7,3 +7,4 @@ export * from "./protocol.js";
 export * from "./redaction.js";
 export * from "./repository.js";
 export * from "./task-detection.js";
+export * from "./discovery.js";

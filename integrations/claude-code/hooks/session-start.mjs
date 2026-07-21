@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -60,6 +61,78 @@ function boardSummary(board) {
   ].join("\n");
 }
 
+function loadWorkspaceDiscovery(repoRoot, workspace) {
+  // Keys are normalized by discoveryKey() in the desktop main process. Match
+  // that first, then the raw path, then legacy board-level discovery.
+  const key = repoRoot.replace(/\/+$/, "").toLowerCase();
+  if (workspace.discoveries?.[key]) return workspace.discoveries[key];
+  if (workspace.discoveries?.[repoRoot]) return workspace.discoveries[repoRoot];
+  const board = workspace.boards?.find((b) => b.repository === repoRoot);
+  return board?.discovery ?? undefined;
+}
+
+function buildDiscoveryContext(repoRoot, workspace) {
+  const discovery = loadWorkspaceDiscovery(repoRoot, workspace);
+  if (!discovery || !discovery.entries || discovery.entries.length === 0) return undefined;
+
+  const entries = discovery.entries;
+  const features = discovery.features ?? [];
+  const now = Date.now();
+  // Status is derived, not stored: the persisted value is written at index time
+  // and is meaningless afterwards. Pre-filtering on it discarded every real
+  // change. Compare against disk instead, gating the hash behind an mtime check
+  // so a large index does not cost a full re-hash on every session start.
+  const changedEntries = [];
+  const missingEntries = [];
+  for (const entry of entries) {
+    const fullPath = resolve(repoRoot, entry.filePath);
+    if (!existsSync(fullPath)) {
+      missingEntries.push(entry);
+      continue;
+    }
+    try {
+      const discoveredAt = new Date(entry.lastDiscovered).getTime();
+      if (Number.isFinite(discoveredAt) && statSync(fullPath).mtimeMs <= discoveredAt) continue;
+      const content = readFileSync(fullPath, "utf8");
+      const currentHash = createHash("sha256").update(content, "utf8").digest("hex").slice(0, 16);
+      if (currentHash !== entry.contentHash) changedEntries.push(entry);
+    } catch {
+      // Unreadable mid-session; treat as unchanged rather than guessing.
+    }
+  }
+
+  const lastScan = discovery.lastFullDiscovery
+    ? `${Math.round((now - new Date(discovery.lastFullDiscovery).getTime()) / 86400000)} days ago`
+    : "never";
+
+  const parts = [
+    "--- Relay Discovery ---",
+    `Last full discovery: ${lastScan}`,
+    `${discovery.discoveryCount} files indexed`,
+    `${features.length} feature areas`,
+  ];
+
+  if (changedEntries.length > 0) {
+    parts.push(`${changedEntries.length} files changed since discovery:`);
+    for (const entry of changedEntries.slice(0, 10)) {
+      parts.push(`  ${entry.filePath} — ${entry.purpose}`);
+    }
+    if (changedEntries.length > 10) parts.push(`  ... and ${changedEntries.length - 10} more`);
+    parts.push("Read changed files first. Use stored discovery for unchanged files.");
+  } else {
+    parts.push("No files changed since last discovery.");
+  }
+
+  if (missingEntries.length > 0) {
+    parts.push(`${missingEntries.length} indexed file(s) no longer exist; those entries are stale.`);
+  }
+
+  parts.push("Use Relay Discovery as cached repo understanding. Do not re-read unchanged files unless task requires implementation details missing from discovery.");
+  parts.push("Check this index before opening a file. Read the file itself only when you need implementation detail the summary does not carry.");
+  parts.push("---");
+  return parts.join("\n");
+}
+
 const input = await new Promise((resolveInput) => {
   let data = "";
   process.stdin.setEncoding("utf8");
@@ -89,11 +162,16 @@ if (link?.enabled !== true) {
   process.exit(0);
 }
 
-console.log([
+const lines = [
   board === undefined ? "[RELAY] Error" : "[RELAY] Active",
   `Board ${link.boardId} is persistent source of truth for long-running work.`,
   `Repo ${repository.root}; branch ${repository.branch ?? "unknown"}; dirty ${repository.dirty ? "yes" : "no"}.`,
   boardSummary(board) ?? "Linked board was not found in app-owned storage; run Relay status before continuing.",
   "Resume behavior: continue the active card first; if none is active, choose the first unverified, unblocked card. Read only relevant context above unless the user asks for a broader audit.",
-  "Checkpoint meaningful progress before card switch, compaction, or session end. Do not upload secrets."
-].join("\n"));
+  "Checkpoint meaningful progress before card switch, compaction, or session end. Do not upload secrets.",
+];
+
+const discoveryContext = buildDiscoveryContext(repository.root, workspace);
+if (discoveryContext !== undefined) lines.push(discoveryContext);
+
+console.log(lines.join("\n"));

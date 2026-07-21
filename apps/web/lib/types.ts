@@ -4,6 +4,7 @@ export type RelayView =
   | "blockers"
   | "context"
   | "decisions"
+  | "discovery"
   | "plan"
   | "timeline";
 
@@ -87,6 +88,40 @@ export interface DecisionRecord {
   status: "Accepted" | "Proposed";
 }
 
+export interface DiscoveryEntry {
+  filePath: string;
+  purpose: string;
+  importantExports: string[];
+  relatedFiles: string[];
+  features: string[];
+  dependencies: string[];
+  lastModified: string;
+  contentHash: string;
+  lastDiscovered: string;
+  discoveredBy: string;
+  confidence: "high" | "medium" | "low";
+  status: "current" | "changed" | "new" | "stale" | "never";
+}
+
+export interface DiscoveryFeature {
+  name: string;
+  description: string;
+  filePaths: string[];
+}
+
+export interface DiscoveryIndex {
+  boardId?: string;
+  repoPath: string;
+  entries: DiscoveryEntry[];
+  features: DiscoveryFeature[];
+  lastFullDiscovery: string | null;
+  lastIncrementalDiscovery?: string | null;
+  coverage: number;
+  staleRelationshipCount: number;
+  discoveryCount: number;
+  version: number;
+}
+
 export interface RelayBoard {
   id: string;
   archivedAt?: string | undefined;
@@ -114,6 +149,7 @@ export interface RelayWorkspaceData {
   boards: RelayBoard[];
   tags?: RelayTag[];
   settings?: RelaySettings;
+  discoveries?: Record<string, DiscoveryIndex>;
 }
 
 export interface RelaySettings {

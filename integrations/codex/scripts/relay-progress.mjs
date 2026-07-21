@@ -364,19 +364,24 @@ function deriveCards(request, phaseIds, now) {
     });
   }
 
-  return Array.from({ length: Math.min(targetCount, 20) }, (_, index) => {
+  // Only emit cards for work areas actually named in the request. Padding out
+  // to targetCount invented cards titled "3. Implementation step 3", which
+  // occupied columns, were reported as the active card by session-start, and
+  // could never be removed. A board with no cards is honest; a board with
+  // fabricated cards looks tracked and is not.
+  return workAreas.slice(0, Math.min(targetCount, 20)).map((area, index) => {
     const phaseIndex = Math.min(index, totalPhases - 1);
-    const cardNumber = index + 1;
-    const area = workAreas[index % Math.max(1, workAreas.length)] ?? `Implementation step ${cardNumber}`;
     return {
       id: randomUUID(),
-      title: `${cardNumber}. ${area}`,
+      title: area,
       description: `Implement ${area.toLowerCase()} with tests and documentation.`,
       columnId: index === 0 ? "progress" : "ready",
       phaseId: phaseIds[phaseIndex],
       type: cardTypeFor(area),
       priority: index === 0 ? "high" : "normal",
-      tags: [...new Set(["agent-created", ...smartTags(area, request)])],
+      // Tagged so prunePlaceholders can retire them once the agent has
+      // replaced them with cards carrying real reasoning.
+      tags: [...new Set(["agent-created", "placeholder", ...smartTags(area, request)])],
       notes: [],
       progress: index === 0 ? 1 : 0,
       criteriaDone: 0,
@@ -387,6 +392,31 @@ function deriveCards(request, phaseIds, now) {
       dependencies: index > 0 && workAreas.length > 1 ? [workAreas[0]] : [],
     };
   });
+}
+
+/** A seeded card is disposable until someone has actually worked it. */
+function isUntouchedPlaceholder(card) {
+  return (card.tags ?? []).includes("placeholder")
+    && (card.notes ?? []).length === 0
+    && (card.progress ?? 0) <= 1
+    && card.columnId !== "verified"
+    && card.blocked !== true;
+}
+
+/**
+ * Drops seeded placeholders once real cards exist on the board. Called
+ * automatically after create-card so the board self-cleans as soon as the
+ * agent records its first genuine task.
+ * @returns {string[]} titles of removed cards
+ */
+function prunePlaceholders(board) {
+  const real = board.cards.filter((card) => !(card.tags ?? []).includes("placeholder"));
+  if (real.length === 0) return [];
+  const doomed = board.cards.filter(isUntouchedPlaceholder);
+  if (doomed.length === 0) return [];
+  const doomedIds = new Set(doomed.map((card) => card.id));
+  board.cards = board.cards.filter((card) => !doomedIds.has(card.id));
+  return doomed.map((card) => card.title);
 }
 
 function requestHighlights(request) {
@@ -606,12 +636,16 @@ function estimateTokens(text) {
  */
 function isContinuation(request) {
   if (typeof request !== "string" || request.trim() === "") return false;
-  const hasKeyword = /\b(continue|resume|keep\s*working|next\s*step|follow\s*up|finish|complete|remaining|onward)\b/i.test(request);
+  const lower = request.toLowerCase();
+  const hasKeyword = /\b(continue|resume|keep\s*working|next\s*step|follow\s*up|finish|complete|remaining|onward|keep\s+going|go\s+ahead|proceed)\b/i.test(lower);
+  if (hasKeyword) return true;
+  // Structured plans with headings or numbered steps are new tasks.
+  const hasHeading = (request.match(/^#{2,3}\s+.+$/gm) ?? []).length >= 1;
+  const hasNumbered = (request.match(/^\d+\.\s+.+$/gm) ?? []).length >= 3;
+  if (hasHeading || hasNumbered) return false;
+  // Short unstructured statements may be continuations.
   const lines = request.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  const shortRequest = lines.length <= 3 && lines.every((l) => l.length < 120);
-  const structuredSections = (request.match(/^#{2,3}\s+.+$/gm) ?? []).length >= 2;
-  const numberedSteps = (request.match(/^\d+\.\s+.+$/gm) ?? []).length >= 3;
-  return hasKeyword || (shortRequest && !structuredSections && !numberedSteps);
+  return lines.length <= 3 && lines.every((l) => l.length < 120);
 }
 
 /** Normalised content hash for dedup. */
@@ -620,12 +654,13 @@ function contentHash(text) {
 }
 
 /**
- * Derive a stable task identity from the repository key and board title.
- * Using only the title (not the full request) so follow-up prompts with
- * different wording still resolve to the same task.
+ * Derive a stable task identity from the repository key and request content.
+ * Different requests produce different taskIds for deterministic dedup.
+ * Follow-up prompts with different wording are handled by auto-continuation
+ * (config link + isContinuation detection) or explicit --task-id.
  */
-function deriveTaskId(repositoryKey, title) {
-  return createHash("sha1").update(`task:${repositoryKey}\n${title}`).digest("hex").slice(0, 16);
+function deriveTaskId(repositoryKey, request) {
+  return createHash("sha1").update(`task:${repositoryKey}\n${request}`).digest("hex").slice(0, 16);
 }
 
 function deriveIdempotencyKey(repositoryKey, taskId, title) {
@@ -710,7 +745,7 @@ async function createBoard() {
   const explicitBoardId = arg("--board-id");
   const explicitTaskId = arg("--task-id");
   const continueName = arg("--continue-board") ?? (hasFlag("--continue") ? title : undefined);
-  const taskId = deriveTaskId(repository.rootKey, title);
+  const taskId = deriveTaskId(repository.rootKey, request || title);
   const idempotencyKey = arg("--idempotency-key") ?? deriveIdempotencyKey(repository.rootKey, taskId, title);
 
   const diagnostics = {
@@ -905,14 +940,64 @@ async function createCard() {
     updatedAt: now,
   };
   board.cards.push(card);
+  // The first real card retires the seeded ones, so a board never shows a
+  // fabricated "Implementation step 1" as active once actual work is recorded.
+  const pruned = prunePlaceholders(board);
   board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
   board.blockers = board.cards.filter((item) => item.blocked).length;
   board.lastActivity = now;
   board.activity.unshift(activity("created card", card.title, now, "blue"));
+  if (pruned.length > 0) {
+    board.activity.unshift(activity("pruned placeholder cards", `${pruned.length} removed`, now, "gray"));
+  }
   addSharedTags(workspace, tags);
   saveWorkspace(workspace);
-  console.log(JSON.stringify({ ok: true, boardId: board.id, cardId: card.id, title: card.title }, null, 2));
+  console.log(JSON.stringify({ ok: true, boardId: board.id, cardId: card.id, title: card.title, prunedPlaceholders: pruned }, null, 2));
 }
+
+/**
+ * Retires seeded placeholder cards on an existing board. Needed because
+ * boards created before placeholders were tagged still carry them, and the
+ * CLI otherwise has no way to remove a card.
+ */
+async function pruneBoard() {
+  const repository = detectRepository(arg("--cwd") ?? process.cwd());
+  const config = loadConfig();
+  const workspace = normalizeWorkspace(loadWorkspace());
+  const board = findLinkedBoard(workspace, repository, config);
+  if (board === undefined) throw new Error("No linked Relay board. Run create-board first or pass --board-id.");
+
+  // Boards predating the placeholder tag: match the generated shape instead.
+  // Deliberately narrow - it must never match a card someone actually wrote.
+  const legacyPattern = /^\d+\.\s+\S/;
+  for (const card of board.cards) {
+    const tags = card.tags ?? [];
+    if (tags.includes("placeholder")) continue;
+    const looksGenerated = tags.includes("agent-created")
+      && legacyPattern.test(card.title)
+      && /^Implement .* with tests and documentation\.$/.test(card.description ?? "")
+      && (card.notes ?? []).length === 0
+      && (card.progress ?? 0) <= 1;
+    if (looksGenerated) card.tags = [...tags, "placeholder"];
+  }
+
+  const removed = prunePlaceholders(board);
+  const now = new Date().toISOString();
+  if (removed.length > 0) {
+    board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
+    board.blockers = board.cards.filter((item) => item.blocked).length;
+    board.lastActivity = now;
+    board.activity.unshift(activity("pruned placeholder cards", `${removed.length} removed`, now, "gray"));
+    saveWorkspace(workspace);
+  }
+  console.log(JSON.stringify({
+    ok: true,
+    boardId: board.id,
+    removed,
+    remaining: board.cards.map((card) => card.title),
+  }, null, 2));
+}
+
 
 function cardType(value) {
   const allowed = new Set(["bug", "decision", "feature", "research", "security", "task", "test"]);
@@ -1300,7 +1385,9 @@ function help() {
   record-decision --title <name> < decision.json
   checkpoint [--card-id <id>] < checkpoint.json
   repair-board [--board-id <id>]
-      Merges duplicate phases, deduplicates activity, compacts context, replaces generic cards.`);
+      Merges duplicate phases, deduplicates activity, compacts context, replaces generic cards.
+  prune-placeholders [--board-id <id>]
+      Removes seeded placeholder cards once real cards exist. Runs automatically after create-card.`);
 }
 
 const command = process.argv[2] ?? "status";
@@ -1313,6 +1400,7 @@ else if (command === "record-context") await recordContext();
 else if (command === "record-decision") await recordDecision();
 else if (command === "checkpoint") await checkpoint();
 else if (command === "repair-board") await repairBoard();
+else if (command === "prune-placeholders") await pruneBoard();
 else if (command === "diagnostics") await diagnostics();
 else if (command === "help" || command === "--help" || command === "-h") help();
 else {

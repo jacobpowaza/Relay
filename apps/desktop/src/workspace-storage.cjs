@@ -15,7 +15,7 @@ function workspaceDataFilePath(userDataPath) {
 
 /**
  * @param {unknown} value
- * @returns {{ directories: unknown[]; boards: unknown[]; settings?: unknown }}
+ * @returns {{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }}
  */
 function validateWorkspace(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -26,7 +26,7 @@ function validateWorkspace(value) {
   if (!Array.isArray(directories) || !Array.isArray(boards)) {
     throw new Error("Relay workspace data must contain directory and board arrays.");
   }
-  /** @type {{ directories: unknown[]; boards: unknown[]; settings?: unknown }} */
+  /** @type {{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }} */
   const workspace = { directories, boards };
   if ("settings" in value && value.settings !== undefined) {
     workspace.settings = value.settings;
@@ -36,7 +36,7 @@ function validateWorkspace(value) {
 
 /**
  * @param {string} filePath
- * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown }>}
+ * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }>}
  */
 async function loadWorkspaceData(filePath) {
   try {
@@ -53,7 +53,7 @@ async function loadWorkspaceData(filePath) {
 /**
  * @param {unknown} value
  * @param {string} filePath
- * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown }>}
+ * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }>}
  */
 async function saveWorkspaceData(value, filePath) {
   const workspace = validateWorkspace(value);
