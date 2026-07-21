@@ -114,9 +114,11 @@ describe("discovery round trip across desktop, hook and session-start", () => {
   it("shows no changes once the hook has re-indexed the edited file", () => {
     const target = path.join(workDir, "src", "auth.ts");
     writeFileSync(target, "export function login() { return 1; }\nexport function logout() {}\n");
+    // Debounce disabled: this covers the round trip, not the wait. With the
+    // default quiet window the edit would still be queued at this point.
     execFileSync("node", [indexHook], {
       input: JSON.stringify({ cwd: workDir, tool_name: "Edit", tool_input: { file_path: target } }),
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, RELAY_DISCOVERY_QUIET_MS: "0" },
       encoding: "utf8",
     });
 

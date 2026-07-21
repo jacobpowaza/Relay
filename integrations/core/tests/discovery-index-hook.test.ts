@@ -50,10 +50,24 @@ function paths(): string[] {
   return readIndex().entries.map((e) => e.filePath);
 }
 
+/**
+ * Runs the hook with the debounce disabled, so these tests exercise indexing
+ * correctness rather than the wait. The debounce itself is covered separately
+ * in the "debounce" block below.
+ */
 function runHook(toolInput: Record<string, unknown>, hook = claudeHook): void {
   execFileSync("node", [hook], {
     input: JSON.stringify({ cwd: workDir, tool_name: "Edit", tool_input: toolInput }),
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, RELAY_DISCOVERY_QUIET_MS: "0" },
+    encoding: "utf8",
+  });
+}
+
+/** Runs the hook with the real debounce active, optionally flushing. */
+function runHookDebounced(toolInput: Record<string, unknown>, args: string[] = []): void {
+  execFileSync("node", [claudeHook, ...args], {
+    input: JSON.stringify({ cwd: workDir, tool_name: "Edit", tool_input: toolInput }),
+    env: { ...process.env, HOME: home, RELAY_DISCOVERY_QUIET_MS: "60000" },
     encoding: "utf8",
   });
 }
@@ -188,7 +202,7 @@ describe("discovery-index PostToolUse hook", () => {
         tool_name: "MultiEdit",
         tool_input: { edits: [{ file_path: path.join(workDir, "src", "c.ts") }] },
       }),
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, RELAY_DISCOVERY_QUIET_MS: "0" },
       encoding: "utf8",
     });
     expect(paths()).toContain(path.join("src", "c.ts"));
@@ -199,5 +213,58 @@ describe("discovery-index PostToolUse hook", () => {
     runHook({ file_path: path.join(workDir, "src", "a.ts") }, codexHook);
     const entry = readIndex().entries.find((e) => e.filePath === path.join("src", "a.ts"));
     expect(entry?.discoveredBy).toBe("codex");
+  });
+
+  describe("debounce", () => {
+    const target = () => path.join(workDir, "src", "a.ts");
+
+    function exportsOf(relPath: string): string[] | undefined {
+      return readIndex().entries.find((e) => e.filePath === relPath)?.importantExports;
+    }
+
+    it("does not index a file that was just edited", () => {
+      writeFileSync(target(), "export function alpha() {}\nexport function pendingMarker() {}\n");
+      runHookDebounced({ file_path: target() });
+      // Still mid-edit as far as the hook is concerned, so the index must
+      // continue to describe the previous, settled version of the file.
+      expect(exportsOf(path.join("src", "a.ts"))).not.toContain("pendingMarker");
+    });
+
+    it("queues the path rather than dropping it", () => {
+      writeFileSync(target(), "export function alpha() {}\nexport function pendingMarker() {}\n");
+      runHookDebounced({ file_path: target() });
+      const pending = JSON.parse(
+        readFileSync(path.join(home, ".relay", "integrations", "discovery-pending.json"), "utf8"),
+      ) as Record<string, Record<string, number>>;
+      const queuedPaths = Object.values(pending).flatMap((repo) => Object.keys(repo));
+      expect(queuedPaths).toContain(path.join("src", "a.ts"));
+    });
+
+    it("indexes the final state once, when flushed", () => {
+      // Three rewrites in a row, as an agent iterating on one file.
+      for (const body of ["one", "two", "three"]) {
+        writeFileSync(target(), `export function alpha() {}\nexport function ${body}() {}\n`);
+        runHookDebounced({ file_path: target() });
+      }
+      expect(exportsOf(path.join("src", "a.ts"))).not.toContain("three");
+
+      runHookDebounced({}, ["--flush"]);
+      const finalExports = exportsOf(path.join("src", "a.ts"));
+      // Only the last version survives; the intermediate states were never
+      // written, which is the entire point of waiting.
+      expect(finalExports).toContain("three");
+      expect(finalExports).not.toContain("one");
+      expect(finalExports).not.toContain("two");
+    });
+
+    it("clears the queue after flushing", () => {
+      writeFileSync(target(), "export function alpha() {}\nexport function settled() {}\n");
+      runHookDebounced({ file_path: target() });
+      runHookDebounced({}, ["--flush"]);
+      const pending = JSON.parse(
+        readFileSync(path.join(home, ".relay", "integrations", "discovery-pending.json"), "utf8"),
+      ) as Record<string, Record<string, number>>;
+      expect(Object.values(pending).flatMap((repo) => Object.keys(repo))).toEqual([]);
+    });
   });
 });

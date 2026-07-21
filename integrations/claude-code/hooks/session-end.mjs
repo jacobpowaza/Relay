@@ -31,6 +31,26 @@ process.stdin.on("end", async () => {
     core.appendCheckpointToLocalWorkspace(workspacePath, checkpoint);
 
     const repoPath = repository.root;
+
+    // Drain the discovery debounce queue before doing anything else. During the
+    // session, edited files wait for a quiet period so a file rewritten several
+    // times is indexed once, at rest. The session ending is the last chance to
+    // index whatever was still inside that window.
+    try {
+      const { execFileSync } = await import("node:child_process");
+      const { fileURLToPath } = await import("node:url");
+      const { join } = await import("node:path");
+      const hookDir = dirname(fileURLToPath(import.meta.url));
+      execFileSync(process.execPath, [join(hookDir, "discovery-index.mjs"), "--flush"], {
+        input: JSON.stringify({ cwd: repoPath }),
+        stdio: ["pipe", "ignore", "ignore"],
+        timeout: 5_000,
+      });
+    } catch {
+      // A failed flush leaves entries queued for the next session; it must
+      // never block session teardown.
+    }
+
     const discovery = core.loadDiscoveryFromWorkspace(workspacePath, repoPath);
     if (discovery && discovery.entries.length > 0) {
       const changedPaths = parsedInput.changedFiles ?? parsedInput.files ?? [];

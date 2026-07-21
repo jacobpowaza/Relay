@@ -162,6 +162,44 @@ function atomicWrite(filePath, data) {
   renameSync(temp, filePath);
 }
 
+/**
+ * How long a file must sit untouched before it is worth indexing.
+ *
+ * Agents rewrite the same file several times in a row — write it, fix a type
+ * error, rename a symbol. Indexing each of those captured half-finished states
+ * and paid a workspace write per edit. Waiting for quiet means the index
+ * records the file as it ended up, once.
+ */
+const QUIET_MS = Number(process.env.RELAY_DISCOVERY_QUIET_MS ?? 90_000);
+
+/**
+ * Pending edits live in plugin-owned storage, NOT workspace.json. The desktop
+ * app keeps workspace.json in memory, so touching it on every edit invites the
+ * same write race this debounce is partly meant to reduce.
+ *
+ * Shape: { "<repo key>": { "<relative path>": <epoch ms> } }
+ */
+function pendingPath() {
+  return `${homedir()}/.relay/integrations/discovery-pending.json`;
+}
+
+function readPending() {
+  try {
+    return JSON.parse(readFileSync(pendingPath(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writePending(pending) {
+  try {
+    atomicWrite(pendingPath(), JSON.stringify(pending, null, 2));
+  } catch {
+    // A lost pending file costs a delayed re-index, not correctness — the next
+    // full scan still picks the file up. Never fail the agent's tool call.
+  }
+}
+
 let raw = "";
 process.stdin.setEncoding("utf8");
 for await (const chunk of process.stdin) raw += chunk;
@@ -173,10 +211,16 @@ try {
   process.exit(0);
 }
 
+// SessionEnd passes --flush: the session is over, so every pending file is
+// final regardless of how recently it was touched.
+const flushAll = process.argv.includes("--flush");
+
 const cwd = payload.cwd ?? payload.workspace?.current_dir ?? process.cwd();
 const repoRoot = detectRepoRoot(cwd);
 const candidates = touchedPaths(payload);
-if (candidates.length === 0) process.exit(0);
+// On a normal edit with nothing touched there is nothing to do. On a flush
+// there is: the queue is drained even though this invocation touched no file.
+if (candidates.length === 0 && !flushAll) process.exit(0);
 
 const wsPath = workspacePath();
 if (!existsSync(wsPath)) process.exit(0);
@@ -196,15 +240,38 @@ const discovery = discoveries[key];
 // stay out of the way until a real scan has happened.
 if (discovery === undefined || !Array.isArray(discovery.entries)) process.exit(0);
 
-const entries = discovery.entries.slice();
-let changed = 0;
+// Stage 1: record what this tool call touched. Re-touching a path that is
+// already pending pushes its deadline out, so a file under active editing is
+// never indexed mid-flight.
+const pending = readPending();
+const repoPending = pending[key] ?? {};
+const now = Date.now();
 
 for (const candidate of candidates) {
   const relativePath = path.isAbsolute(candidate) ? path.relative(repoRoot, candidate) : candidate;
   // A path outside the repo would resolve to ../.. and poison the index.
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) continue;
   if (!SOURCE_EXTENSIONS.has(path.extname(relativePath).toLowerCase())) continue;
+  repoPending[relativePath] = now;
+}
 
+// Stage 2: index only the paths that have gone quiet. Everything else stays
+// queued for a later invocation or for the SessionEnd flush.
+const due = Object.entries(repoPending)
+  .filter(([, touchedAt]) => flushAll || now - touchedAt >= QUIET_MS)
+  .map(([relativePath]) => relativePath);
+
+if (due.length === 0) {
+  pending[key] = repoPending;
+  writePending(pending);
+  process.exit(0);
+}
+
+const entries = discovery.entries.slice();
+let changed = 0;
+
+for (const relativePath of due) {
+  delete repoPending[relativePath];
   const index = entries.findIndex((entry) => entry.filePath === relativePath);
   const entry = buildEntry(repoRoot, relativePath, "claude-code");
 
@@ -225,6 +292,13 @@ for (const candidate of candidates) {
     changed += 1;
   }
 }
+
+// The queue is cleared for everything indexed above, whether or not the content
+// actually differed — a re-check that found no change is still a completed
+// check, and leaving it queued would retry it forever.
+if (Object.keys(repoPending).length === 0) delete pending[key];
+else pending[key] = repoPending;
+writePending(pending);
 
 if (changed === 0) process.exit(0);
 
