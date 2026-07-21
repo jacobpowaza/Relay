@@ -1,13 +1,20 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
-export function loadDiscoveryFromWorkspace(workspacePath, boardId) {
+import { resolve } from "node:path";
+export function loadDiscoveryFromWorkspace(workspacePath, repoPath) {
     if (!existsSync(workspacePath))
         return null;
     try {
         const raw = JSON.parse(readFileSync(workspacePath, "utf8"));
-        const board = (raw.boards ?? []).find((b) => b.id === boardId);
+        // Keys are normalized (resolved, trailing slash stripped, lowercased) by
+        // discoveryKey() in the desktop main process. Match that or lookups miss
+        // when the caller's cwd casing differs from the indexed path.
+        const key = repoPath.replace(/\/+$/, "").toLowerCase();
+        const direct = raw.discoveries?.[key] ?? raw.discoveries?.[repoPath];
+        if (direct !== undefined)
+            return direct;
+        // Fallback: board-level discovery, for boards predating the map.
+        const board = (raw.boards ?? []).find((b) => b.repository === repoPath);
         return board?.discovery ?? null;
     }
     catch {

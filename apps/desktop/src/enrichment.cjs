@@ -1,5 +1,7 @@
 const { spawn } = require("node:child_process");
-const { readFile } = require("node:fs/promises");
+const { randomUUID } = require("node:crypto");
+const { readFile, rm } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
 const path = require("node:path");
 
 /**
@@ -18,8 +20,8 @@ const path = require("node:path");
  * @property {string} command
  * @property {Array<{ id: string; label: string }>} models
  * @property {string} defaultModel
- * @property {(model: string) => string[]} buildArgs
- * @property {(stdout: string) => string} extractText
+ * @property {(model: string, outputFile: string) => string[]} buildArgs
+ * @property {(stdout: string, outputFileContents: string) => string} extractText
  */
 
 /** @type {Record<string, AgentSpec>} */
@@ -34,26 +36,44 @@ const AGENTS = {
     ],
     defaultModel: "claude-haiku-4-5-20251001",
     buildArgs: (/** @type {string} */ model) => ["-p", "--model", model, "--output-format", "json"],
-    // claude --output-format json wraps the reply in an envelope.
+    // Verified against claude 2.0 live: the prompt is accepted on stdin and the
+    // reply text lands in `result` on a single JSON object printed to stdout.
     extractText: (/** @type {string} */ stdout) => {
       const parsed = JSON.parse(stdout);
+      // A refusal or tool failure still exits 0 with a well-formed envelope, so
+      // the error flag has to be checked or the message becomes a "summary".
+      if (parsed.is_error === true) {
+        const detail = typeof parsed.result === "string" ? parsed.result.slice(0, 200) : parsed.subtype;
+        throw new Error(`claude reported an error: ${detail}`);
+      }
       if (typeof parsed.result === "string") return parsed.result;
-      if (typeof parsed.text === "string") return parsed.text;
       throw new Error("Unrecognized claude CLI envelope.");
     },
   },
   codex: {
     label: "Codex",
     command: "codex",
-    models: [
-      { id: "gpt-5-codex", label: "GPT-5 Codex" },
-      { id: "gpt-5", label: "GPT-5" },
-      { id: "o3", label: "o3" },
+    // The previous hardcoded list was wrong: codex v0.144 rejects `gpt-5-codex`
+    // outright on a ChatGPT account ("not supported when using Codex with a
+    // ChatGPT account") and warns that its metadata is unknown. Which ids are
+    // accepted depends on the account tier, so rather than guess we defer to
+    // whatever the user already configured in ~/.codex/config.toml.
+    models: [{ id: "", label: "Codex default (from config)" }],
+    defaultModel: "",
+    buildArgs: (/** @type {string} */ model, /** @type {string} */ outputFile) => [
+      "exec",
+      // An empty model means "don't pass -m", letting codex pick its default.
+      ...(model === "" ? [] : ["-m", model]),
+      "--sandbox", "read-only",
+      "--color", "never",
+      // Without this codex refuses to start in any directory that is not a git
+      // repo, which a discovered project may well not be.
+      "--skip-git-repo-check",
+      // codex writes its banner, transcript and errors to stderr and leaves
+      // stdout EMPTY, so the reply has to be collected from a file.
+      "-o", outputFile,
     ],
-    defaultModel: "gpt-5-codex",
-    buildArgs: (/** @type {string} */ model) => ["exec", "-m", model, "--sandbox", "read-only", "--color", "never"],
-    // codex exec streams prose; the JSON block is recovered by extractJsonArray.
-    extractText: (/** @type {string} */ stdout) => stdout,
+    extractText: (/** @type {string} */ _stdout, /** @type {string} */ outputFileContents) => outputFileContents,
   },
 };
 
@@ -154,11 +174,15 @@ function runAgentBatch({ agent, model, prompt, cwd, signal }) {
   const spec = AGENTS[agent];
   if (spec === undefined) return Promise.reject(new Error(`Unknown discovery agent: ${agent}`));
 
-  return new Promise((resolve, reject) => {
+  // Some CLIs (codex) only expose their reply through a file. Allocate one per
+  // call so concurrent batches cannot read each other's output.
+  const outputFile = path.join(tmpdir(), `relay-discovery-${randomUUID()}.txt`);
+
+  const run = new Promise((resolve, reject) => {
     /** @type {import("node:child_process").ChildProcessWithoutNullStreams} */
     let child;
     try {
-      child = spawn(spec.command, spec.buildArgs(model), {
+      child = spawn(spec.command, spec.buildArgs(model, outputFile), {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: process.env,
@@ -203,15 +227,27 @@ function runAgentBatch({ agent, model, prompt, cwd, signal }) {
       finish(reject, new Error(hint));
     });
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       if (settled) return;
       if (code !== 0) {
         const detail = stderr.trim().split("\n").slice(-3).join(" ").slice(0, 300);
         finish(reject, new Error(`${spec.label} exited with code ${code}${detail ? `: ${detail}` : ""}`));
         return;
       }
+      // Missing is normal for agents that reply on stdout; only codex writes it.
+      let outputFileContents = "";
       try {
-        finish(resolve, extractJsonArray(spec.extractText(stdout)));
+        outputFileContents = await readFile(outputFile, "utf8");
+      } catch { /* falls through to the stdout path */ }
+      try {
+        const text = spec.extractText(stdout, outputFileContents);
+        if (text.trim() === "") {
+          // Exit 0 with nothing to show means the reply went somewhere we are
+          // not looking. Say so instead of reporting zero enriched files.
+          const detail = stderr.trim().split("\n").slice(-3).join(" ").slice(0, 300);
+          throw new Error(`no reply text captured${detail ? ` (stderr: ${detail})` : ""}`);
+        }
+        finish(resolve, extractJsonArray(text));
       } catch (error) {
         finish(reject, new Error(`Could not parse ${spec.label} reply: ${error instanceof Error ? error.message : String(error)}`));
       }
@@ -220,6 +256,9 @@ function runAgentBatch({ agent, model, prompt, cwd, signal }) {
     child.stdin.write(prompt);
     child.stdin.end();
   });
+
+  // Batches run in a loop, so leaking one temp file per batch would add up.
+  return run.finally(() => rm(outputFile, { force: true }).catch(() => {}));
 }
 
 /**

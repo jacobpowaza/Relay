@@ -13,7 +13,8 @@ export interface DiscoveryEntry {
     status: "current" | "changed" | "new" | "stale" | "never";
 }
 export interface DiscoveryIndex {
-    boardId: string;
+    boardId?: string;
+    repoPath: string;
     entries: DiscoveryEntry[];
     features: Array<{
         name: string;
@@ -26,7 +27,7 @@ export interface DiscoveryIndex {
     discoveryCount: number;
     version: number;
 }
-export declare function loadDiscoveryFromWorkspace(workspacePath: string, boardId: string): DiscoveryIndex | null;
+export declare function loadDiscoveryFromWorkspace(workspacePath: string, repoPath: string): DiscoveryIndex | null;
 export declare function buildDiscoveryContextPacket(discovery: DiscoveryIndex, options: {
     repoRoot: string;
     taskHint?: string;
