@@ -118,27 +118,36 @@ export function buildDiscoveryContextPacket(discovery, options) {
     parts.push(`---`);
     return parts.join("\n");
 }
+function tokenize(text) {
+    // Four characters minimum: "the"/"to"/"and" match everything and rank
+    // nothing. Splitting on non-alphanumerics also breaks camelCase paths apart
+    // at the separators that matter (src/auth-token.ts -> src, auth, token).
+    return [...new Set(text.toLowerCase().match(/[a-z0-9]{4,}/g) ?? [])];
+}
 /**
  * Picks the entries worth showing for a task description, capped at `limit`.
  *
- * Matching is per-word rather than on the whole string: a task hint is a
- * sentence ("wire the discovery UI to real agents"), and testing whether a
- * purpose contains that entire sentence matches nothing. Words shorter than
- * four characters are dropped because "the"/"to"/"a" match everything.
+ * Matching is per-token rather than on the whole string: a task hint is a
+ * sentence ("wire the discovery UI to real agents"), and asking whether a
+ * purpose contains that entire sentence matches nothing.
+ *
+ * Tokens match on a shared prefix rather than equality, because the vocabulary
+ * on the two sides is rarely identical — a task says "authentication" while the
+ * file is `auth.ts`, or says "discovery" while the feature is "discoveries".
+ * Requiring an exact hit made the filter silently return nothing in exactly the
+ * cases it was added for.
  */
 export function selectRelevantEntries(entries, taskHint, limit = 10) {
-    const words = [...new Set(taskHint.toLowerCase().match(/[a-z0-9]{4,}/g) ?? [])];
-    if (words.length === 0)
+    const hintTokens = tokenize(taskHint);
+    if (hintTokens.length === 0)
         return [];
     const scored = entries
         .map((entry) => {
-        const haystack = [
-            entry.filePath,
-            entry.purpose,
-            ...entry.features,
-            ...entry.importantExports,
-        ].join(" ").toLowerCase();
-        return { entry, score: words.filter((word) => haystack.includes(word)).length };
+        const entryTokens = tokenize([entry.filePath, entry.purpose, ...entry.features, ...entry.importantExports].join(" "));
+        // Score by distinct hint tokens hit, so an entry cannot inflate its rank
+        // by repeating one word across its path, purpose and features.
+        const score = hintTokens.filter((hintToken) => entryTokens.some((entryToken) => entryToken.startsWith(hintToken) || hintToken.startsWith(entryToken))).length;
+        return { entry, score };
     })
         .filter((candidate) => candidate.score > 0);
     scored.sort((a, b) => b.score - a.score || a.entry.filePath.localeCompare(b.entry.filePath));

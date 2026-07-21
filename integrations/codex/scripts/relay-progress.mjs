@@ -34,6 +34,23 @@ function hasFlag(name) {
   return process.argv.includes(name);
 }
 
+/**
+ * Extracts the path from one `git status --porcelain=v1` line.
+ *
+ * Not a fixed slice(3). The shared git() helper trims the whole output block,
+ * which strips the leading space off the FIRST line only — " M app/x.ts"
+ * becomes "M app/x.ts", so slice(3) ate a character and produced "pp/x.ts".
+ * That corrupted path was stored in board context and fed to the session-start
+ * hook, putting a nonexistent file into agent context. Match the status field
+ * instead of assuming its width.
+ */
+function porcelainPath(line) {
+  const withoutStatus = line.replace(/^\s*[ACDMRTU?!][ACDMRTU?! ]?\s+/, "");
+  // Renames read "old -> new"; the new path is the one on disk.
+  const arrow = withoutStatus.lastIndexOf(" -> ");
+  return (arrow === -1 ? withoutStatus : withoutStatus.slice(arrow + 4)).trim();
+}
+
 function git(cwd, args) {
   try {
     return execFileSync("git", args, {
@@ -77,7 +94,7 @@ function detectRepository(cwd = process.cwd()) {
     branch: git(root, ["branch", "--show-current"]),
     headCommit: git(root, ["rev-parse", "HEAD"]),
     dirty: status.length > 0,
-    changedFiles: status.map((line) => line.slice(3).trim()),
+    changedFiles: status.map(porcelainPath),
   };
 }
 
@@ -269,10 +286,35 @@ function findColumn(board, requestedColumn) {
   return board.columns?.find((column) => column.id === requestedColumn || column.name.toLowerCase() === requestedColumn.toLowerCase());
 }
 
+/**
+ * Resolves --card-id, accepting an unambiguous id prefix.
+ *
+ * Previously an exact match was required and a miss returned undefined, so a
+ * checkpoint passed a short id silently landed on cardId:null — a detached
+ * checkpoint that looks like tracked work and is not. Anything unresolvable is
+ * now an error.
+ */
+function resolveCard(board, explicitCardId) {
+  const cards = board.cards ?? [];
+  const exact = cards.find((card) => card.id === explicitCardId);
+  if (exact !== undefined) return exact;
+
+  const matches = cards.filter((card) => card.id.startsWith(explicitCardId));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw new Error(`Card id "${explicitCardId}" is ambiguous; it matches ${matches.length} cards. Pass more characters.`);
+  }
+  throw new Error(`No card with id "${explicitCardId}" on board ${board.name}. Run status to list card ids.`);
+}
+
 function activeCard(board, explicitCardId = arg("--card-id")) {
-  if (explicitCardId !== undefined) return board.cards?.find((card) => card.id === explicitCardId);
-  return board.cards?.find((card) => card.columnId === "progress")
-    ?? board.cards?.find((card) => card.columnId !== "verified" && !card.blocked)
+  if (explicitCardId !== undefined) return resolveCard(board, explicitCardId);
+  // Blocked cards are excluded from BOTH selectors. Excluding them only from
+  // the fallback let a card parked in the In Progress column be reported as
+  // active forever, shadowing every card behind it.
+  const open = (board.cards ?? []).filter((card) => !card.blocked);
+  return open.find((card) => card.columnId === "progress")
+    ?? open.find((card) => card.columnId !== "verified")
     ?? board.cards?.[0];
 }
 
@@ -774,13 +816,13 @@ async function createBoard() {
 
     let existing;
     let mode;
-    if (explicitBoardId !== undefined) {
-      existing = workspace.boards.find((board) => board.id === explicitBoardId);
-      if (existing === undefined) throw new Error(`No Relay board with id ${explicitBoardId} to continue.`);
-      mode = "continue";
-    } else if (explicitTaskId !== undefined) {
+    if (explicitTaskId !== undefined) {
       existing = workspace.boards.find((board) => board.taskId === explicitTaskId);
       if (existing === undefined) throw new Error(`No Relay board with taskId ${explicitTaskId} to continue.`);
+      mode = "continue";
+    } else if (explicitBoardId !== undefined) {
+      existing = workspace.boards.find((board) => board.id === explicitBoardId);
+      if (existing === undefined) throw new Error(`No Relay board with id ${explicitBoardId} to continue.`);
       mode = "continue";
     } else if (continueName !== undefined) {
       const wanted = continueName.toLowerCase();
@@ -917,7 +959,17 @@ async function createCard() {
   const now = new Date().toISOString();
   const title = arg("--title") ?? payload.title;
   if (typeof title !== "string" || title.trim() === "") throw new Error("create-card requires --title or JSON {\"title\":\"...\"} on stdin.");
-  const phase = findPhase(board, arg("--phase") ?? payload.phase ?? payload.phaseId) ?? { id: randomUUID(), name: "Planning", objective: "", progress: 0, status: "planned" };
+  // An unrecognized --phase used to fall back to a fresh "Planning" phase, so
+  // a typo silently filed the card somewhere the caller never asked for and
+  // never noticed. Name the valid phases instead.
+  const requestedPhase = arg("--phase") ?? payload.phase ?? payload.phaseId;
+  const phase = findPhase(board, requestedPhase)
+    ?? (requestedPhase === undefined
+      ? { id: randomUUID(), name: "Planning", objective: "", progress: 0, status: "planned" }
+      : (() => {
+        const known = (board.phases ?? []).map((item) => item.name).join(", ");
+        throw new Error(`Unknown phase "${requestedPhase}". Existing phases: ${known || "none"}. The CLI cannot create phases; use one of these or omit --phase.`);
+      })());
   if (!board.phases.some((item) => item.id === phase.id)) board.phases.push(phase);
   const column = findColumn(board, arg("--column") ?? payload.column ?? payload.columnId) ?? board.columns[0] ?? defaultColumns[0];
   if (!board.columns.some((item) => item.id === column.id)) board.columns.push(column);
@@ -953,6 +1005,115 @@ async function createCard() {
   addSharedTags(workspace, tags);
   saveWorkspace(workspace);
   console.log(JSON.stringify({ ok: true, boardId: board.id, cardId: card.id, title: card.title, prunedPlaceholders: pruned }, null, 2));
+}
+
+/**
+ * Edits an existing card in place.
+ *
+ * Without this the board was append-only: a card created with a wrong title,
+ * phase or description could never be corrected, which is how placeholder and
+ * misfiled cards became permanent. Only the fields actually supplied change.
+ */
+async function updateCard() {
+  const repository = detectRepository(arg("--cwd") ?? process.cwd());
+  const config = loadConfig();
+  const workspace = normalizeWorkspace(loadWorkspace());
+  const board = findLinkedBoard(workspace, repository, config);
+  if (board === undefined) throw new Error("No linked Relay board. Run create-board first or pass --board-id.");
+
+  const cardId = arg("--card-id");
+  if (cardId === undefined) throw new Error("update-card requires --card-id. Run status to list card ids.");
+  const card = resolveCard(board, cardId);
+
+  const payload = await readPayload();
+  const now = new Date().toISOString();
+  const changed = [];
+
+  const title = arg("--title") ?? payload.title;
+  if (typeof title === "string" && title.trim() !== "") {
+    card.title = title.trim().slice(0, 180);
+    changed.push("title");
+  }
+  if (typeof payload.description === "string") {
+    card.description = payload.description.slice(0, 4_000);
+    changed.push("description");
+  }
+  const requestedColumn = arg("--column") ?? payload.column ?? payload.columnId;
+  if (requestedColumn !== undefined) {
+    const column = findColumn(board, requestedColumn);
+    if (column === undefined) {
+      throw new Error(`Unknown column "${requestedColumn}". Existing columns: ${(board.columns ?? []).map((c) => c.name).join(", ")}.`);
+    }
+    card.columnId = column.id;
+    changed.push("column");
+  }
+  const requestedPhase = arg("--phase") ?? payload.phase ?? payload.phaseId;
+  if (requestedPhase !== undefined) {
+    const phase = findPhase(board, requestedPhase);
+    if (phase === undefined) {
+      throw new Error(`Unknown phase "${requestedPhase}". Existing phases: ${(board.phases ?? []).map((p) => p.name).join(", ")}.`);
+    }
+    card.phaseId = phase.id;
+    changed.push("phase");
+  }
+  if (payload.tags !== undefined) {
+    card.tags = parseTags(payload.tags);
+    addSharedTags(workspace, card.tags);
+    changed.push("tags");
+  }
+  if (Number.isFinite(Number(payload.progress))) {
+    card.progress = Math.max(0, Math.min(100, Number(payload.progress)));
+    changed.push("progress");
+  }
+  if (typeof payload.blocked === "boolean") {
+    card.blocked = payload.blocked;
+    changed.push("blocked");
+  }
+  if (payload.priority !== undefined) {
+    card.priority = cardPriority(payload.priority);
+    changed.push("priority");
+  }
+  if (changed.length === 0) {
+    throw new Error("update-card changed nothing. Pass --title/--column/--phase or JSON with description, tags, progress, blocked or priority.");
+  }
+
+  card.updatedAt = now;
+  board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
+  board.blockers = board.cards.filter((item) => item.blocked).length;
+  board.lastActivity = now;
+  board.activity.unshift(activity("updated card", `${card.title} (${changed.join(", ")})`, now, "blue"));
+  saveWorkspace(workspace);
+  console.log(JSON.stringify({ ok: true, boardId: board.id, cardId: card.id, changed }, null, 2));
+}
+
+/**
+ * Removes a card. Requires --force when the card carries recorded work, so a
+ * card with notes or progress cannot be discarded by a stray command.
+ */
+async function deleteCard() {
+  const repository = detectRepository(arg("--cwd") ?? process.cwd());
+  const config = loadConfig();
+  const workspace = normalizeWorkspace(loadWorkspace());
+  const board = findLinkedBoard(workspace, repository, config);
+  if (board === undefined) throw new Error("No linked Relay board. Run create-board first or pass --board-id.");
+
+  const cardId = arg("--card-id");
+  if (cardId === undefined) throw new Error("delete-card requires --card-id. Run status to list card ids.");
+  const card = resolveCard(board, cardId);
+
+  const hasWork = (card.notes ?? []).length > 0 || card.progress > 0;
+  if (hasWork && arg("--force") === undefined && !process.argv.includes("--force")) {
+    throw new Error(`Card "${card.title}" has recorded work (${(card.notes ?? []).length} notes, ${card.progress}% progress). Re-run with --force to delete it anyway.`);
+  }
+
+  const now = new Date().toISOString();
+  board.cards = board.cards.filter((item) => item.id !== card.id);
+  board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
+  board.blockers = board.cards.filter((item) => item.blocked).length;
+  board.lastActivity = now;
+  board.activity.unshift(activity("deleted card", card.title, now, "gray"));
+  saveWorkspace(workspace);
+  console.log(JSON.stringify({ ok: true, boardId: board.id, deletedCardId: card.id, title: card.title }, null, 2));
 }
 
 /**
@@ -997,7 +1158,6 @@ async function pruneBoard() {
     remaining: board.cards.map((card) => card.title),
   }, null, 2));
 }
-
 
 function cardType(value) {
   const allowed = new Set(["bug", "decision", "feature", "research", "security", "task", "test"]);
@@ -1380,6 +1540,10 @@ function help() {
       --continue                attach to the existing board named <title>
       --idempotency-key <key>   override the derived idempotency key
   create-card --title <name> [--column Ready] [--phase Foundation] [--tags ui,api] < details.json
+  update-card --card-id <id> [--title <name>] [--column <name>] [--phase <name>] < details.json
+      Edits an existing card. Only supplied fields change.
+  delete-card --card-id <id> [--force]
+      Removes a card. --force required if it has notes or progress.
   add-note [--card-id <id>] < note.txt
   record-context --title <name> [--category "Current state"] < context.txt
   record-decision --title <name> < decision.json
@@ -1395,6 +1559,8 @@ if (command === "status") await status();
 else if (command === "resume") await resume();
 else if (command === "create-board") await createBoard();
 else if (command === "create-card") await createCard();
+else if (command === "update-card") await updateCard();
+else if (command === "delete-card") await deleteCard();
 else if (command === "add-note") await addNote();
 else if (command === "record-context") await recordContext();
 else if (command === "record-decision") await recordDecision();

@@ -52,10 +52,15 @@ export declare function buildDiscoveryContextPacket(discovery: DiscoveryIndex, o
 /**
  * Picks the entries worth showing for a task description, capped at `limit`.
  *
- * Matching is per-word rather than on the whole string: a task hint is a
- * sentence ("wire the discovery UI to real agents"), and testing whether a
- * purpose contains that entire sentence matches nothing. Words shorter than
- * four characters are dropped because "the"/"to"/"a" match everything.
+ * Matching is per-token rather than on the whole string: a task hint is a
+ * sentence ("wire the discovery UI to real agents"), and asking whether a
+ * purpose contains that entire sentence matches nothing.
+ *
+ * Tokens match on a shared prefix rather than equality, because the vocabulary
+ * on the two sides is rarely identical — a task says "authentication" while the
+ * file is `auth.ts`, or says "discovery" while the feature is "discoveries".
+ * Requiring an exact hit made the filter silently return nothing in exactly the
+ * cases it was added for.
  */
 export declare function selectRelevantEntries(entries: DiscoveryEntry[], taskHint: string, limit?: number): DiscoveryEntry[];
 export declare function buildDiscoveryLine(repoRoot: string, discovery: DiscoveryIndex | null): string;
