@@ -10,6 +10,57 @@ import {
   type ReactNode,
 } from "react";
 
+/**
+ * Stamps `.app-idle` on <html> whenever the window is hidden or unfocused, so
+ * the stylesheet can freeze looping animations instead of compositing frames
+ * nobody is watching. See the "idle power" block in globals.css.
+ *
+ * Blur counts as idle, not just visibility: a Relay window fully covered by
+ * another app still reports visibilityState "visible" on macOS, which is the
+ * common laptop case this is meant to catch.
+ *
+ * Mounted once, at the app root. It writes a class rather than lifting idleness
+ * into React state on purpose — this must not re-render the tree on every focus
+ * change, which would cost more than the animations it saves.
+ */
+export function useIdleClass(): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    const sync = () => {
+      root.classList.toggle("app-idle", document.visibilityState === "hidden" || !document.hasFocus());
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    window.addEventListener("focus", sync);
+    window.addEventListener("blur", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("blur", sync);
+      root.classList.remove("app-idle");
+    };
+  }, []);
+}
+
+/**
+ * Whether the document is currently visible. Unlike useIdleClass this DOES
+ * re-render, because callers use it to suspend polling loops — and a timer that
+ * keeps firing behind a hidden window is a battery cost with no reader.
+ *
+ * Keyed on visibility rather than focus: a poll is still worth running in a
+ * visible-but-unfocused window, where the user can see the result.
+ */
+export function useDocumentVisible(): boolean {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const sync = () => setVisible(document.visibilityState === "visible");
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
+  return visible;
+}
+
 export function useEscapeKey(onEscape: () => void, enabled = true): void {
   useEffect(() => {
     if (!enabled) return;

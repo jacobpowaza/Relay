@@ -25,6 +25,18 @@
             "statusMessage": "Checking Relay checkpoint state"
           }
         ]
+      },
+      {
+        "matcher": "functions.apply_patch|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/hooks/discovery-index.mjs\"",
+            "timeout": 5,
+            "async": true,
+            "statusMessage": "Updating Relay discovery index"
+          }
+        ]
       }
     ],
     "PreCompact": [

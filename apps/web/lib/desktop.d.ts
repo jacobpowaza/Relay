@@ -185,6 +185,77 @@ export interface RelayGitExecutionResult {
   warnings: string[];
 }
 
+export interface DiscoveryIndex {
+  boardId?: string;
+  repoPath: string;
+  entries: DiscoveryEntry[];
+  features: DiscoveryFeature[];
+  lastFullDiscovery: string | null;
+  lastIncrementalDiscovery?: string | null;
+  coverage: number;
+  staleRelationshipCount: number;
+  discoveryCount: number;
+  version: number;
+}
+
+export interface DiscoveryEntry {
+  filePath: string;
+  purpose: string;
+  importantExports: string[];
+  relatedFiles: string[];
+  features: string[];
+  dependencies: string[];
+  lastModified: string;
+  contentHash: string;
+  lastDiscovered: string;
+  discoveredBy: string;
+  confidence: "high" | "medium" | "low";
+  status: "current" | "changed" | "new" | "stale" | "never";
+}
+
+export interface DiscoveryFeature {
+  name: string;
+  description: string;
+  filePaths: string[];
+}
+
+export interface DiscoveryAgent {
+  id: string;
+  label: string;
+  models: Array<{ id: string; label: string }>;
+  defaultModel: string;
+}
+
+/**
+ * Pre-run cost projection for an enrichment pass. `costUsd` is null whenever the
+ * chosen model has no known per-token price — Codex bills against a ChatGPT
+ * plan, so for it the honest answer is tokens only and never a dollar figure.
+ */
+export interface DiscoveryEstimate {
+  agent: string;
+  model: string;
+  files: number;
+  batches: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+  approximate: true;
+}
+
+export interface DiscoveryProgress {
+  repoPath: string;
+  completed: number;
+  total: number;
+  phase: string;
+}
+
+export interface DiscoveryDiff {
+  changed: string[];
+  added: string[];
+  deleted: string[];
+  needsFullDiscovery: boolean;
+}
+
 interface RelayDesktopApi {
   chooseDirectory: () => Promise<{ name: string; path: string } | null>;
   getIntegrationConfig: () => Promise<RelayIntegrationConfigResult>;
@@ -221,6 +292,15 @@ interface RelayDesktopApi {
   dismissUpdateVersion: (version: string) => Promise<RelayUpdateState>;
   onUpdateState: (callback: (state: RelayUpdateState) => void) => () => void;
   getDiagnostics: () => Promise<RelayDiagnosticsSnapshot | null>;
+  startDiscovery: (input: { repoPath: string; force?: boolean; discoveredBy?: string }) => Promise<DiscoveryIndex>;
+  getDiscovery: (input: { repoPath: string }) => Promise<DiscoveryIndex | null>;
+  getDiscoveryDiff: (input: { repoPath: string }) => Promise<DiscoveryDiff>;
+  updateDiscoveryFiles: (input: { repoPath: string; filePaths: string[]; discoveredBy?: string }) => Promise<DiscoveryIndex & { applied: { added: number; updated: number; removed: number } }>;
+  getDiscoveryAgents: () => Promise<DiscoveryAgent[]>;
+  enrichDiscovery: (input: { repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }) => Promise<DiscoveryIndex & { enriched: number; failed: string[]; error?: string; alreadyComplete?: boolean }>;
+  estimateDiscoveryEnrichment: (input: { repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }) => Promise<DiscoveryEstimate>;
+  cancelDiscoveryEnrichment: (input: { repoPath: string }) => Promise<{ cancelled: boolean }>;
+  onDiscoveryProgress: (callback: (progress: DiscoveryProgress) => void) => () => void;
 }
 
 declare global {

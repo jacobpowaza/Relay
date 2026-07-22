@@ -15,7 +15,7 @@ function workspaceDataFilePath(userDataPath) {
 
 /**
  * @param {unknown} value
- * @returns {{ directories: unknown[]; boards: unknown[]; settings?: unknown }}
+ * @returns {{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }}
  */
 function validateWorkspace(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -26,17 +26,25 @@ function validateWorkspace(value) {
   if (!Array.isArray(directories) || !Array.isArray(boards)) {
     throw new Error("Relay workspace data must contain directory and board arrays.");
   }
-  /** @type {{ directories: unknown[]; boards: unknown[]; settings?: unknown }} */
+  /** @type {{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }} */
   const workspace = { directories, boards };
   if ("settings" in value && value.settings !== undefined) {
     workspace.settings = value.settings;
+  }
+  // Dropped silently before this line was added: every load and save round-
+  // tripped through validateWorkspace without ever copying `discoveries`
+  // across, so a freshly scanned index never survived being written to disk
+  // — the very next read (e.g. the estimate step right after a scan) saw an
+  // empty workspace and reported "No discovery index exists".
+  if ("discoveries" in value && value.discoveries !== undefined) {
+    workspace.discoveries = /** @type {Record<string, any>} */ (value.discoveries);
   }
   return workspace;
 }
 
 /**
  * @param {string} filePath
- * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown }>}
+ * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }>}
  */
 async function loadWorkspaceData(filePath) {
   try {
@@ -53,7 +61,7 @@ async function loadWorkspaceData(filePath) {
 /**
  * @param {unknown} value
  * @param {string} filePath
- * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown }>}
+ * @returns {Promise<{ directories: unknown[]; boards: unknown[]; settings?: unknown; discoveries?: Record<string, any> }>}
  */
 async function saveWorkspaceData(value, filePath) {
   const workspace = validateWorkspace(value);

@@ -4,6 +4,7 @@ export type RelayView =
   | "blockers"
   | "context"
   | "decisions"
+  | "discovery"
   | "plan"
   | "timeline";
 
@@ -87,6 +88,50 @@ export interface DecisionRecord {
   status: "Accepted" | "Proposed";
 }
 
+export interface DiscoveryEntry {
+  filePath: string;
+  purpose: string;
+  importantExports: string[];
+  relatedFiles: string[];
+  features: string[];
+  dependencies: string[];
+  lastModified: string;
+  contentHash: string;
+  lastDiscovered: string;
+  discoveredBy: string;
+  confidence: "high" | "medium" | "low";
+  status: "current" | "changed" | "new" | "stale" | "never";
+  /**
+   * True once an agent wrote this purpose, absent while it is still the
+   * heuristic pattern-match. Also the ledger the enrichment run bills against:
+   * the default candidate set is every entry where this is not true, so a
+   * re-run never re-pays for a summary it already has.
+   */
+  enriched?: boolean;
+}
+
+export interface DiscoveryFeature {
+  name: string;
+  description: string;
+  filePaths: string[];
+}
+
+export interface DiscoveryIndex {
+  boardId?: string;
+  repoPath: string;
+  entries: DiscoveryEntry[];
+  features: DiscoveryFeature[];
+  lastFullDiscovery: string | null;
+  lastIncrementalDiscovery?: string | null;
+  coverage: number;
+  staleRelationshipCount: number;
+  discoveryCount: number;
+  version: number;
+  /** Written by the enrichment pass; both absent until one has run. */
+  enrichedCount?: number;
+  lastEnrichment?: string;
+}
+
 export interface RelayBoard {
   id: string;
   archivedAt?: string | undefined;
@@ -114,6 +159,7 @@ export interface RelayWorkspaceData {
   boards: RelayBoard[];
   tags?: RelayTag[];
   settings?: RelaySettings;
+  discoveries?: Record<string, DiscoveryIndex>;
 }
 
 export interface RelaySettings {

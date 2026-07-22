@@ -31,6 +31,18 @@
             "statusMessage": "Checking Relay checkpoint state"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/discovery-index.mjs\"",
+            "timeout": 5,
+            "async": true,
+            "statusMessage": "Updating Relay discovery index"
+          }
+        ]
       }
     ],
     "PreCompact": [

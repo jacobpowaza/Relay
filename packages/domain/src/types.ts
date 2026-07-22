@@ -177,3 +177,40 @@ export interface ContextPacket {
   estimatedTokens: number;
   omittedCount: number;
 }
+
+// --- Discovery -----------------------------------------------------------
+
+export type DiscoveryStatus = "current" | "changed" | "new" | "stale" | "never";
+export type ConfidenceLevel = "high" | "medium" | "low";
+
+export interface DiscoveryEntry {
+  filePath: string;
+  purpose: string;
+  importantExports: string[];
+  relatedFiles: string[];
+  features: string[];
+  dependencies: string[];
+  lastModified: string;
+  contentHash: string;
+  lastDiscovered: string;
+  discoveredBy: string;
+  confidence: ConfidenceLevel;
+  status: DiscoveryStatus;
+}
+
+export interface DiscoveryFeature {
+  name: string;
+  description: string;
+  filePaths: string[];
+}
+
+export interface DiscoveryIndex {
+  boardId: EntityId;
+  entries: DiscoveryEntry[];
+  features: DiscoveryFeature[];
+  lastFullDiscovery: string | null;
+  coverage: number;
+  staleRelationshipCount: number;
+  discoveryCount: number;
+  version: number;
+}

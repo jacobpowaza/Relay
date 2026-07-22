@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { canonicalizeRepositoryPath } from "./canonical-path.mjs";
 
@@ -32,6 +32,23 @@ function arg(name) {
 
 function hasFlag(name) {
   return process.argv.includes(name);
+}
+
+/**
+ * Extracts the path from one `git status --porcelain=v1` line.
+ *
+ * Not a fixed slice(3). The shared git() helper trims the whole output block,
+ * which strips the leading space off the FIRST line only — " M app/x.ts"
+ * becomes "M app/x.ts", so slice(3) ate a character and produced "pp/x.ts".
+ * That corrupted path was stored in board context and fed to the session-start
+ * hook, putting a nonexistent file into agent context. Match the status field
+ * instead of assuming its width.
+ */
+function porcelainPath(line) {
+  const withoutStatus = line.replace(/^\s*[ACDMRTU?!][ACDMRTU?! ]?\s+/, "");
+  // Renames read "old -> new"; the new path is the one on disk.
+  const arrow = withoutStatus.lastIndexOf(" -> ");
+  return (arrow === -1 ? withoutStatus : withoutStatus.slice(arrow + 4)).trim();
 }
 
 function git(cwd, args) {
@@ -77,7 +94,7 @@ function detectRepository(cwd = process.cwd()) {
     branch: git(root, ["branch", "--show-current"]),
     headCommit: git(root, ["rev-parse", "HEAD"]),
     dirty: status.length > 0,
-    changedFiles: status.map((line) => line.slice(3).trim()),
+    changedFiles: status.map(porcelainPath),
   };
 }
 
@@ -269,10 +286,35 @@ function findColumn(board, requestedColumn) {
   return board.columns?.find((column) => column.id === requestedColumn || column.name.toLowerCase() === requestedColumn.toLowerCase());
 }
 
+/**
+ * Resolves --card-id, accepting an unambiguous id prefix.
+ *
+ * Previously an exact match was required and a miss returned undefined, so a
+ * checkpoint passed a short id silently landed on cardId:null — a detached
+ * checkpoint that looks like tracked work and is not. Anything unresolvable is
+ * now an error.
+ */
+function resolveCard(board, explicitCardId) {
+  const cards = board.cards ?? [];
+  const exact = cards.find((card) => card.id === explicitCardId);
+  if (exact !== undefined) return exact;
+
+  const matches = cards.filter((card) => card.id.startsWith(explicitCardId));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    throw new Error(`Card id "${explicitCardId}" is ambiguous; it matches ${matches.length} cards. Pass more characters.`);
+  }
+  throw new Error(`No card with id "${explicitCardId}" on board ${board.name}. Run status to list card ids.`);
+}
+
 function activeCard(board, explicitCardId = arg("--card-id")) {
-  if (explicitCardId !== undefined) return board.cards?.find((card) => card.id === explicitCardId);
-  return board.cards?.find((card) => card.columnId === "progress")
-    ?? board.cards?.find((card) => card.columnId !== "verified" && !card.blocked)
+  if (explicitCardId !== undefined) return resolveCard(board, explicitCardId);
+  // Blocked cards are excluded from BOTH selectors. Excluding them only from
+  // the fallback let a card parked in the In Progress column be reported as
+  // active forever, shadowing every card behind it.
+  const open = (board.cards ?? []).filter((card) => !card.blocked);
+  return open.find((card) => card.columnId === "progress")
+    ?? open.find((card) => card.columnId !== "verified")
     ?? board.cards?.[0];
 }
 
@@ -364,19 +406,24 @@ function deriveCards(request, phaseIds, now) {
     });
   }
 
-  return Array.from({ length: Math.min(targetCount, 20) }, (_, index) => {
+  // Only emit cards for work areas actually named in the request. Padding out
+  // to targetCount invented cards titled "3. Implementation step 3", which
+  // occupied columns, were reported as the active card by session-start, and
+  // could never be removed. A board with no cards is honest; a board with
+  // fabricated cards looks tracked and is not.
+  return workAreas.slice(0, Math.min(targetCount, 20)).map((area, index) => {
     const phaseIndex = Math.min(index, totalPhases - 1);
-    const cardNumber = index + 1;
-    const area = workAreas[index % Math.max(1, workAreas.length)] ?? `Implementation step ${cardNumber}`;
     return {
       id: randomUUID(),
-      title: `${cardNumber}. ${area}`,
+      title: area,
       description: `Implement ${area.toLowerCase()} with tests and documentation.`,
       columnId: index === 0 ? "progress" : "ready",
       phaseId: phaseIds[phaseIndex],
       type: cardTypeFor(area),
       priority: index === 0 ? "high" : "normal",
-      tags: [...new Set(["agent-created", ...smartTags(area, request)])],
+      // Tagged so prunePlaceholders can retire them once the agent has
+      // replaced them with cards carrying real reasoning.
+      tags: [...new Set(["agent-created", "placeholder", ...smartTags(area, request)])],
       notes: [],
       progress: index === 0 ? 1 : 0,
       criteriaDone: 0,
@@ -387,6 +434,31 @@ function deriveCards(request, phaseIds, now) {
       dependencies: index > 0 && workAreas.length > 1 ? [workAreas[0]] : [],
     };
   });
+}
+
+/** A seeded card is disposable until someone has actually worked it. */
+function isUntouchedPlaceholder(card) {
+  return (card.tags ?? []).includes("placeholder")
+    && (card.notes ?? []).length === 0
+    && (card.progress ?? 0) <= 1
+    && card.columnId !== "verified"
+    && card.blocked !== true;
+}
+
+/**
+ * Drops seeded placeholders once real cards exist on the board. Called
+ * automatically after create-card so the board self-cleans as soon as the
+ * agent records its first genuine task.
+ * @returns {string[]} titles of removed cards
+ */
+function prunePlaceholders(board) {
+  const real = board.cards.filter((card) => !(card.tags ?? []).includes("placeholder"));
+  if (real.length === 0) return [];
+  const doomed = board.cards.filter(isUntouchedPlaceholder);
+  if (doomed.length === 0) return [];
+  const doomedIds = new Set(doomed.map((card) => card.id));
+  board.cards = board.cards.filter((card) => !doomedIds.has(card.id));
+  return doomed.map((card) => card.title);
 }
 
 function requestHighlights(request) {
@@ -736,7 +808,7 @@ async function createBoard() {
 
     let directory = workspace.directories.find((item) => item.path !== undefined && sameRepositoryPath(item.path, repository.root));
     if (directory === undefined) {
-      directory = { id: randomUUID(), name: title, path: repository.root };
+      directory = { id: randomUUID(), name: basename(repository.root), path: repository.root };
       workspace.directories.push(directory);
     } else if (directory.path === undefined) {
       directory.path = repository.root;
@@ -887,7 +959,17 @@ async function createCard() {
   const now = new Date().toISOString();
   const title = arg("--title") ?? payload.title;
   if (typeof title !== "string" || title.trim() === "") throw new Error("create-card requires --title or JSON {\"title\":\"...\"} on stdin.");
-  const phase = findPhase(board, arg("--phase") ?? payload.phase ?? payload.phaseId) ?? { id: randomUUID(), name: "Planning", objective: "", progress: 0, status: "planned" };
+  // An unrecognized --phase used to fall back to a fresh "Planning" phase, so
+  // a typo silently filed the card somewhere the caller never asked for and
+  // never noticed. Name the valid phases instead.
+  const requestedPhase = arg("--phase") ?? payload.phase ?? payload.phaseId;
+  const phase = findPhase(board, requestedPhase)
+    ?? (requestedPhase === undefined
+      ? { id: randomUUID(), name: "Planning", objective: "", progress: 0, status: "planned" }
+      : (() => {
+        const known = (board.phases ?? []).map((item) => item.name).join(", ");
+        throw new Error(`Unknown phase "${requestedPhase}". Existing phases: ${known || "none"}. The CLI cannot create phases; use one of these or omit --phase.`);
+      })());
   if (!board.phases.some((item) => item.id === phase.id)) board.phases.push(phase);
   const column = findColumn(board, arg("--column") ?? payload.column ?? payload.columnId) ?? board.columns[0] ?? defaultColumns[0];
   if (!board.columns.some((item) => item.id === column.id)) board.columns.push(column);
@@ -910,13 +992,171 @@ async function createCard() {
     updatedAt: now,
   };
   board.cards.push(card);
+  // The first real card retires the seeded ones, so a board never shows a
+  // fabricated "Implementation step 1" as active once actual work is recorded.
+  const pruned = prunePlaceholders(board);
   board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
   board.blockers = board.cards.filter((item) => item.blocked).length;
   board.lastActivity = now;
   board.activity.unshift(activity("created card", card.title, now, "blue"));
+  if (pruned.length > 0) {
+    board.activity.unshift(activity("pruned placeholder cards", `${pruned.length} removed`, now, "gray"));
+  }
   addSharedTags(workspace, tags);
   saveWorkspace(workspace);
-  console.log(JSON.stringify({ ok: true, boardId: board.id, cardId: card.id, title: card.title }, null, 2));
+  console.log(JSON.stringify({ ok: true, boardId: board.id, cardId: card.id, title: card.title, prunedPlaceholders: pruned }, null, 2));
+}
+
+/**
+ * Edits an existing card in place.
+ *
+ * Without this the board was append-only: a card created with a wrong title,
+ * phase or description could never be corrected, which is how placeholder and
+ * misfiled cards became permanent. Only the fields actually supplied change.
+ */
+async function updateCard() {
+  const repository = detectRepository(arg("--cwd") ?? process.cwd());
+  const config = loadConfig();
+  const workspace = normalizeWorkspace(loadWorkspace());
+  const board = findLinkedBoard(workspace, repository, config);
+  if (board === undefined) throw new Error("No linked Relay board. Run create-board first or pass --board-id.");
+
+  const cardId = arg("--card-id");
+  if (cardId === undefined) throw new Error("update-card requires --card-id. Run status to list card ids.");
+  const card = resolveCard(board, cardId);
+
+  const payload = await readPayload();
+  const now = new Date().toISOString();
+  const changed = [];
+
+  const title = arg("--title") ?? payload.title;
+  if (typeof title === "string" && title.trim() !== "") {
+    card.title = title.trim().slice(0, 180);
+    changed.push("title");
+  }
+  if (typeof payload.description === "string") {
+    card.description = payload.description.slice(0, 4_000);
+    changed.push("description");
+  }
+  const requestedColumn = arg("--column") ?? payload.column ?? payload.columnId;
+  if (requestedColumn !== undefined) {
+    const column = findColumn(board, requestedColumn);
+    if (column === undefined) {
+      throw new Error(`Unknown column "${requestedColumn}". Existing columns: ${(board.columns ?? []).map((c) => c.name).join(", ")}.`);
+    }
+    card.columnId = column.id;
+    changed.push("column");
+  }
+  const requestedPhase = arg("--phase") ?? payload.phase ?? payload.phaseId;
+  if (requestedPhase !== undefined) {
+    const phase = findPhase(board, requestedPhase);
+    if (phase === undefined) {
+      throw new Error(`Unknown phase "${requestedPhase}". Existing phases: ${(board.phases ?? []).map((p) => p.name).join(", ")}.`);
+    }
+    card.phaseId = phase.id;
+    changed.push("phase");
+  }
+  if (payload.tags !== undefined) {
+    card.tags = parseTags(payload.tags);
+    addSharedTags(workspace, card.tags);
+    changed.push("tags");
+  }
+  if (Number.isFinite(Number(payload.progress))) {
+    card.progress = Math.max(0, Math.min(100, Number(payload.progress)));
+    changed.push("progress");
+  }
+  if (typeof payload.blocked === "boolean") {
+    card.blocked = payload.blocked;
+    changed.push("blocked");
+  }
+  if (payload.priority !== undefined) {
+    card.priority = cardPriority(payload.priority);
+    changed.push("priority");
+  }
+  if (changed.length === 0) {
+    throw new Error("update-card changed nothing. Pass --title/--column/--phase or JSON with description, tags, progress, blocked or priority.");
+  }
+
+  card.updatedAt = now;
+  board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
+  board.blockers = board.cards.filter((item) => item.blocked).length;
+  board.lastActivity = now;
+  board.activity.unshift(activity("updated card", `${card.title} (${changed.join(", ")})`, now, "blue"));
+  saveWorkspace(workspace);
+  console.log(JSON.stringify({ ok: true, boardId: board.id, cardId: card.id, changed }, null, 2));
+}
+
+/**
+ * Removes a card. Requires --force when the card carries recorded work, so a
+ * card with notes or progress cannot be discarded by a stray command.
+ */
+async function deleteCard() {
+  const repository = detectRepository(arg("--cwd") ?? process.cwd());
+  const config = loadConfig();
+  const workspace = normalizeWorkspace(loadWorkspace());
+  const board = findLinkedBoard(workspace, repository, config);
+  if (board === undefined) throw new Error("No linked Relay board. Run create-board first or pass --board-id.");
+
+  const cardId = arg("--card-id");
+  if (cardId === undefined) throw new Error("delete-card requires --card-id. Run status to list card ids.");
+  const card = resolveCard(board, cardId);
+
+  const hasWork = (card.notes ?? []).length > 0 || card.progress > 0;
+  if (hasWork && arg("--force") === undefined && !process.argv.includes("--force")) {
+    throw new Error(`Card "${card.title}" has recorded work (${(card.notes ?? []).length} notes, ${card.progress}% progress). Re-run with --force to delete it anyway.`);
+  }
+
+  const now = new Date().toISOString();
+  board.cards = board.cards.filter((item) => item.id !== card.id);
+  board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
+  board.blockers = board.cards.filter((item) => item.blocked).length;
+  board.lastActivity = now;
+  board.activity.unshift(activity("deleted card", card.title, now, "gray"));
+  saveWorkspace(workspace);
+  console.log(JSON.stringify({ ok: true, boardId: board.id, deletedCardId: card.id, title: card.title }, null, 2));
+}
+
+/**
+ * Retires seeded placeholder cards on an existing board. Needed because
+ * boards created before placeholders were tagged still carry them, and the
+ * CLI otherwise has no way to remove a card.
+ */
+async function pruneBoard() {
+  const repository = detectRepository(arg("--cwd") ?? process.cwd());
+  const config = loadConfig();
+  const workspace = normalizeWorkspace(loadWorkspace());
+  const board = findLinkedBoard(workspace, repository, config);
+  if (board === undefined) throw new Error("No linked Relay board. Run create-board first or pass --board-id.");
+
+  // Boards predating the placeholder tag: match the generated shape instead.
+  // Deliberately narrow - it must never match a card someone actually wrote.
+  const legacyPattern = /^\d+\.\s+\S/;
+  for (const card of board.cards) {
+    const tags = card.tags ?? [];
+    if (tags.includes("placeholder")) continue;
+    const looksGenerated = tags.includes("agent-created")
+      && legacyPattern.test(card.title)
+      && /^Implement .* with tests and documentation\.$/.test(card.description ?? "")
+      && (card.notes ?? []).length === 0
+      && (card.progress ?? 0) <= 1;
+    if (looksGenerated) card.tags = [...tags, "placeholder"];
+  }
+
+  const removed = prunePlaceholders(board);
+  const now = new Date().toISOString();
+  if (removed.length > 0) {
+    board.activeTasks = board.cards.filter((item) => item.columnId !== "verified").length;
+    board.blockers = board.cards.filter((item) => item.blocked).length;
+    board.lastActivity = now;
+    board.activity.unshift(activity("pruned placeholder cards", `${removed.length} removed`, now, "gray"));
+    saveWorkspace(workspace);
+  }
+  console.log(JSON.stringify({
+    ok: true,
+    boardId: board.id,
+    removed,
+    remaining: board.cards.map((card) => card.title),
+  }, null, 2));
 }
 
 function cardType(value) {
@@ -1300,12 +1540,18 @@ function help() {
       --continue                attach to the existing board named <title>
       --idempotency-key <key>   override the derived idempotency key
   create-card --title <name> [--column Ready] [--phase Foundation] [--tags ui,api] < details.json
+  update-card --card-id <id> [--title <name>] [--column <name>] [--phase <name>] < details.json
+      Edits an existing card. Only supplied fields change.
+  delete-card --card-id <id> [--force]
+      Removes a card. --force required if it has notes or progress.
   add-note [--card-id <id>] < note.txt
   record-context --title <name> [--category "Current state"] < context.txt
   record-decision --title <name> < decision.json
   checkpoint [--card-id <id>] < checkpoint.json
   repair-board [--board-id <id>]
-      Merges duplicate phases, deduplicates activity, compacts context, replaces generic cards.`);
+      Merges duplicate phases, deduplicates activity, compacts context, replaces generic cards.
+  prune-placeholders [--board-id <id>]
+      Removes seeded placeholder cards once real cards exist. Runs automatically after create-card.`);
 }
 
 const command = process.argv[2] ?? "status";
@@ -1313,11 +1559,14 @@ if (command === "status") await status();
 else if (command === "resume") await resume();
 else if (command === "create-board") await createBoard();
 else if (command === "create-card") await createCard();
+else if (command === "update-card") await updateCard();
+else if (command === "delete-card") await deleteCard();
 else if (command === "add-note") await addNote();
 else if (command === "record-context") await recordContext();
 else if (command === "record-decision") await recordDecision();
 else if (command === "checkpoint") await checkpoint();
 else if (command === "repair-board") await repairBoard();
+else if (command === "prune-placeholders") await pruneBoard();
 else if (command === "diagnostics") await diagnostics();
 else if (command === "help" || command === "--help" || command === "-h") help();
 else {

@@ -1,7 +1,7 @@
 const path = require("node:path");
 
 const { mkdirSync, watch } = require("node:fs");
-const { mkdir, readFile, rename, writeFile } = require("node:fs/promises");
+const { mkdir, readFile, rename, stat, writeFile } = require("node:fs/promises");
 const { randomUUID } = require("node:crypto");
 const { homedir } = require("node:os");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } = require("electron");
@@ -21,6 +21,8 @@ const { createBackgroundService } = require("./background-service.cjs");
 const { createTrayService } = require("./tray-service.cjs");
 const { createUpdaterService } = require("./updater-service.cjs");
 const { createDiagnosticsService } = require("./diagnostics-service.cjs");
+const { buildEntry, discoverRepository, diffDiscovery, withDerivedStatus } = require("./discovery.cjs");
+const { enrichEntries, estimateEnrichmentCost, listAgents } = require("./enrichment.cjs");
 
 app.setName("Relay");
 
@@ -649,10 +651,395 @@ function syncTrayPresence() {
   }
 }
 
+// --- discovery --------------------------------------------------------------------
+
+/**
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string }} input
+ */
+/**
+ * repoPath is used as a raw object key, so casing and trailing-slash drift
+ * between what the renderer passes and what git reports would silently miss
+ * on case-insensitive volumes. Normalize on every read and write.
+ * @param {string} repoPath
+ */
+function discoveryKey(repoPath) {
+  return path.resolve(repoPath).replace(/\/+$/, "").toLowerCase();
+}
+
+/**
+ * @param {any} workspace
+ * @param {string} repoPath
+ */
+function readDiscovery(workspace, repoPath) {
+  /** @type {Record<string, any>} */
+  const discoveries = workspace.discoveries ?? {};
+  const key = discoveryKey(repoPath);
+  if (discoveries[key]) return discoveries[key];
+  // Pre-normalization indexes were keyed by the raw path; adopt them rather
+  // than silently rescanning and orphaning the old entry.
+  const legacy = Object.keys(discoveries).find((k) => discoveryKey(k) === key);
+  return legacy === undefined ? undefined : discoveries[legacy];
+}
+
+/**
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string; force?: boolean; discoveredBy?: string }} input
+ */
+async function startDiscovery(_event, input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("Repo path is required for discovery.");
+  if (typeof input.repoPath !== "string" || input.repoPath.trim() === "") throw new Error("A repository path is required for discovery.");
+
+  diagnostics.recordEvent("discoveryScan");
+  const workspace = await loadWorkspace();
+  const key = discoveryKey(input.repoPath);
+  const existing = readDiscovery(workspace, input.repoPath);
+  const discoveredBy = input.discoveredBy ?? "relay-desktop";
+
+  let index;
+  if (input.force === true || existing === undefined || (existing.entries ?? []).length === 0) {
+    index = await discoverRepository(input.repoPath, { discoveredBy });
+  } else {
+    index = await incrementalDiscovery(input.repoPath, existing, discoveredBy);
+  }
+
+  index.repoPath = input.repoPath;
+  delete index.boardId;
+
+  if (workspace.discoveries === undefined) workspace.discoveries = {};
+  // Drop any legacy raw-path key so the same repo is never indexed twice.
+  for (const k of Object.keys(workspace.discoveries)) {
+    if (k !== key && discoveryKey(k) === key) delete workspace.discoveries[k];
+  }
+  workspace.discoveries[key] = index;
+
+  await saveWorkspace(_event, workspace);
+  return index;
+}
+
+/**
+ * Re-inspects only what changed. Unchanged entries are carried forward by
+ * reference, so an incremental pass costs one walk plus a hash of the files
+ * whose mtime actually moved.
+ * @param {string} repoPath
+ * @param {any} existing
+ * @param {string} discoveredBy
+ */
+async function incrementalDiscovery(repoPath, existing, discoveredBy) {
+  /** @type {Array<any>} */
+  const previous = existing.entries ?? [];
+  const diff = await diffDiscovery(repoPath, previous);
+  const deleted = new Set(diff.deleted);
+  const reinspect = [...new Set([...diff.changed, ...diff.added])];
+
+  const carried = previous.filter((/** @type {any} */ e) => !deleted.has(e.filePath) && !reinspect.includes(e.filePath));
+  /** @type {Array<any>} */
+  const rebuilt = [];
+  for (const relativePath of reinspect) {
+    const entry = await buildEntry(repoPath, relativePath, { discoveredBy });
+    if (entry !== null) rebuilt.push(entry);
+  }
+
+  const entries = [...carried, ...rebuilt].sort((/** @type {any} */ a, /** @type {any} */ b) => a.filePath.localeCompare(b.filePath));
+
+  // Deleting an entry orphans inbound relatedFiles/dependencies references on
+  // entries that were carried forward untouched. Sweep them or those become
+  // the stale paths that make the index untrustworthy.
+  const live = new Set(entries.map((/** @type {any} */ e) => e.filePath));
+  let staleRelationshipCount = 0;
+  for (const entry of entries) {
+    const related = entry.relatedFiles.filter((/** @type {string} */ p) => live.has(p));
+    const deps = entry.dependencies.filter((/** @type {string} */ p) => live.has(p) || !deleted.has(p));
+    staleRelationshipCount += (entry.relatedFiles.length - related.length);
+    entry.relatedFiles = related;
+    entry.dependencies = deps;
+  }
+
+  /** @type {Map<string, { name: string; description: string; filePaths: string[] }>} */
+  const featureMap = new Map();
+  for (const entry of entries) {
+    const name = entry.features[0];
+    if (!name) continue;
+    if (!featureMap.has(name)) featureMap.set(name, { name, description: `${name} feature area`, filePaths: [] });
+    featureMap.get(name)?.filePaths.push(entry.filePath);
+  }
+
+  return {
+    entries,
+    features: [...featureMap.values()],
+    // An incremental pass is not a full discovery; keep the original timestamp
+    // so staleness is measured from the last time everything was actually read.
+    lastFullDiscovery: existing.lastFullDiscovery ?? new Date().toISOString(),
+    lastIncrementalDiscovery: new Date().toISOString(),
+    coverage: existing.coverage ?? 100,
+    staleRelationshipCount,
+    discoveryCount: entries.length,
+    version: (existing.version ?? 1) + 1,
+  };
+}
+
+/**
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string }} input
+ */
+async function getDiscoveryDiff(_event, input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("Repo path is required.");
+  if (typeof input.repoPath !== "string" || input.repoPath.trim() === "") throw new Error("A repository path is required.");
+  const workspace = await loadWorkspace();
+  const existing = readDiscovery(workspace, input.repoPath)?.entries ?? [];
+  if (existing.length === 0) return { changed: [], added: [], deleted: [], needsFullDiscovery: true };
+  const diff = await diffDiscovery(input.repoPath, existing);
+  return { ...diff, needsFullDiscovery: false };
+}
+
+/**
+ * Returns the stored index with status derived against current disk state.
+ * The UI and the plugin context packet both read through this so they can
+ * never disagree about which files are changed.
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string }} input
+ */
+async function getDiscovery(_event, input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("Repo path is required.");
+  if (typeof input.repoPath !== "string" || input.repoPath.trim() === "") throw new Error("A repository path is required.");
+  const workspace = await loadWorkspace();
+  const stored = readDiscovery(workspace, input.repoPath);
+  if (stored === undefined) return null;
+  return { ...stored, entries: await withDerivedStatus(input.repoPath, stored.entries ?? []) };
+}
+
+/**
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string; filePaths: string[]; discoveredBy: string }} input
+ */
+async function updateDiscoveryFiles(_event, input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("Repo path and file paths are required.");
+  if (typeof input.repoPath !== "string" || input.repoPath.trim() === "") throw new Error("A repository path is required.");
+  if (!Array.isArray(input.filePaths)) throw new Error("filePaths must be an array.");
+
+  const workspace = await loadWorkspace();
+  const key = discoveryKey(input.repoPath);
+  const discovery = readDiscovery(workspace, input.repoPath);
+  if (!discovery) throw new Error("No discovery index exists for this repo path. Run full discovery first.");
+
+  /** @type {Array<any>} */
+  const entries = (discovery.entries ?? []).slice();
+  const discoveredBy = input.discoveredBy ?? "relay";
+  let added = 0;
+  let updated = 0;
+  let removed = 0;
+
+  for (const filePath of input.filePaths) {
+    if (typeof filePath !== "string" || filePath.trim() === "") continue;
+    const relativePath = path.isAbsolute(filePath)
+      ? path.relative(input.repoPath, filePath)
+      : filePath;
+    // A path outside the repo would resolve to ../.. and poison the index.
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) continue;
+
+    const idx = entries.findIndex((/** @type {any} */ e) => e.filePath === relativePath);
+    // buildEntry returns null when the file is unreadable, which is how a
+    // deletion presents. Drop the entry rather than leaving a stale path.
+    const entry = await buildEntry(input.repoPath, relativePath, { discoveredBy });
+    if (entry === null) {
+      if (idx !== -1) { entries.splice(idx, 1); removed += 1; }
+      continue;
+    }
+    if (idx === -1) { entries.push(entry); added += 1; }
+    else { entries[idx] = entry; updated += 1; }
+  }
+
+  entries.sort((/** @type {any} */ a, /** @type {any} */ b) => a.filePath.localeCompare(b.filePath));
+
+  const live = new Set(entries.map((/** @type {any} */ e) => e.filePath));
+  let staleRelationshipCount = 0;
+  for (const entry of entries) {
+    const related = entry.relatedFiles.filter((/** @type {string} */ p) => live.has(p));
+    staleRelationshipCount += entry.relatedFiles.length - related.length;
+    entry.relatedFiles = related;
+  }
+
+  /** @type {Map<string, { name: string; description: string; filePaths: string[] }>} */
+  const featureMap = new Map();
+  for (const entry of entries) {
+    const name = entry.features[0];
+    if (!name) continue;
+    if (!featureMap.has(name)) featureMap.set(name, { name, description: `${name} feature area`, filePaths: [] });
+    featureMap.get(name)?.filePaths.push(entry.filePath);
+  }
+
+  if (workspace.discoveries === undefined) workspace.discoveries = {};
+  workspace.discoveries[key] = {
+    ...discovery,
+    entries,
+    features: [...featureMap.values()],
+    staleRelationshipCount,
+    discoveryCount: entries.length,
+    lastIncrementalDiscovery: new Date().toISOString(),
+    version: (discovery.version ?? 1) + 1,
+  };
+  await saveWorkspace(_event, workspace);
+  return { ...workspace.discoveries[key], applied: { added, updated, removed } };
+}
+
+/** In-flight enrichment runs, keyed by repo, so cancel can reach them. */
+const enrichmentRuns = new Map();
+
+function getDiscoveryAgents() {
+  return listAgents();
+}
+
+/**
+ * Hybrid enrichment: the heuristic index already covers the repo, this upgrades
+ * selected entries to agent-written purposes. Defaults to entries that were
+ * never enriched, so repeated runs do not re-pay for the same summaries.
+ *
+ * @param {import("electron").IpcMainInvokeEvent} event
+ * @param {{ repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }} input
+ */
+async function enrichDiscovery(event, input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("Enrichment input is required.");
+  if (typeof input.repoPath !== "string" || input.repoPath.trim() === "") throw new Error("A repository path is required.");
+  if (typeof input.agent !== "string" || input.agent.trim() === "") throw new Error("An agent is required.");
+
+  const key = discoveryKey(input.repoPath);
+  if (enrichmentRuns.has(key)) throw new Error("An enrichment run is already active for this repository.");
+
+  const workspace = await loadWorkspace();
+  const discovery = readDiscovery(workspace, input.repoPath);
+  if (!discovery) throw new Error("No discovery index exists for this repo path. Run discovery first.");
+
+  /** @type {Array<any>} */
+  const entries = discovery.entries ?? [];
+  const candidates = Array.isArray(input.filePaths) && input.filePaths.length > 0
+    ? input.filePaths
+    : entries.filter((/** @type {any} */ e) => e.enriched !== true).map((/** @type {any} */ e) => e.filePath);
+  const limit = typeof input.limit === "number" && input.limit > 0 ? input.limit : candidates.length;
+  const filePaths = candidates.slice(0, limit);
+
+  if (filePaths.length === 0) {
+    return { ...discovery, enriched: 0, failed: [], alreadyComplete: true };
+  }
+
+  const controller = new AbortController();
+  enrichmentRuns.set(key, controller);
+  diagnostics.recordEvent("discoveryEnrich");
+
+  try {
+    const result = await enrichEntries({
+      repoRoot: input.repoPath,
+      entries,
+      filePaths,
+      agent: input.agent,
+      model: input.model,
+      signal: controller.signal,
+      onProgress: (progress) => {
+        // Progress goes to the renderer only. Mirroring it to stdout would
+        // duplicate the same tokens in two places for no added information.
+        if (!event.sender.isDestroyed()) {
+          event.sender.send("relay:discovery:progress", { repoPath: input.repoPath, ...progress });
+        }
+      },
+    });
+
+    /** @type {Map<string, { name: string; description: string; filePaths: string[] }>} */
+  const featureMap = new Map();
+    for (const entry of result.entries) {
+      for (const name of entry.features) {
+        if (!featureMap.has(name)) featureMap.set(name, { name, description: `${name} feature area`, filePaths: [] });
+        featureMap.get(name)?.filePaths.push(entry.filePath);
+      }
+    }
+
+    const updated = {
+      ...discovery,
+      entries: result.entries,
+      features: [...featureMap.values()],
+      lastEnrichment: new Date().toISOString(),
+      enrichedCount: result.entries.filter((/** @type {any} */ e) => e.enriched === true).length,
+      version: (discovery.version ?? 1) + 1,
+    };
+
+    if (workspace.discoveries === undefined) workspace.discoveries = {};
+    workspace.discoveries[key] = updated;
+    await saveWorkspace(event, workspace);
+
+    // Partial failures still persist: the batches that succeeded are real work.
+    return { ...updated, enriched: result.enriched, failed: result.failed, error: result.error };
+  } finally {
+    enrichmentRuns.delete(key);
+  }
+}
+
+/**
+ * Prices an enrichment run before it starts, so the "Discover with ..." button
+ * can warn instead of silently spending.
+ *
+ * Selects exactly the same candidate set enrichDiscovery would — unenriched
+ * entries, or an explicit selection, capped by the same limit. An estimate
+ * computed over a different set of files than the run will touch is worse than
+ * no estimate at all. Sizes come from stat rather than from the stored index,
+ * because the index records a content hash, not a length.
+ *
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }} input
+ */
+async function estimateDiscoveryEnrichment(_event, input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("Estimate input is required.");
+  if (typeof input.repoPath !== "string" || input.repoPath.trim() === "") throw new Error("A repository path is required.");
+  if (typeof input.agent !== "string" || input.agent.trim() === "") throw new Error("An agent is required.");
+
+  const workspace = await loadWorkspace();
+  const discovery = readDiscovery(workspace, input.repoPath);
+  if (!discovery) throw new Error("No discovery index exists for this repo path. Run discovery first.");
+
+  /** @type {Array<any>} */
+  const entries = discovery.entries ?? [];
+  const candidates = Array.isArray(input.filePaths) && input.filePaths.length > 0
+    ? input.filePaths
+    : entries.filter((/** @type {any} */ e) => e.enriched !== true).map((/** @type {any} */ e) => e.filePath);
+  const limit = typeof input.limit === "number" && input.limit > 0 ? input.limit : candidates.length;
+  const filePaths = candidates.slice(0, limit);
+
+  /** @type {number[]} */
+  const fileSizes = [];
+  for (const relativePath of filePaths) {
+    try {
+      const info = await stat(path.resolve(input.repoPath, relativePath));
+      fileSizes.push(info.size);
+    } catch {
+      // A file that vanished since the last scan is skipped by buildPrompt too,
+      // so leaving it out of the estimate keeps the two consistent.
+    }
+  }
+
+  return estimateEnrichmentCost({ agent: input.agent, model: input.model, fileSizes });
+}
+
+/**
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string }} input
+ */
+function cancelDiscoveryEnrichment(_event, input) {
+  if (input === null || typeof input !== "object") throw new Error("Repo path is required.");
+  const controller = enrichmentRuns.get(discoveryKey(input.repoPath));
+  if (controller === undefined) return { cancelled: false };
+  controller.abort();
+  return { cancelled: true };
+}
+
 // --- IPC registration -------------------------------------------------------------
 
 ipcMain.handle("relay:workspace:load", loadWorkspace);
 ipcMain.handle("relay:workspace:save", saveWorkspace);
+ipcMain.handle("relay:discovery:start", startDiscovery);
+ipcMain.handle("relay:discovery:get", getDiscovery);
+ipcMain.handle("relay:discovery:diff", getDiscoveryDiff);
+ipcMain.handle("relay:discovery:update", updateDiscoveryFiles);
+ipcMain.handle("relay:discovery:agents", getDiscoveryAgents);
+ipcMain.handle("relay:discovery:enrich", enrichDiscovery);
+ipcMain.handle("relay:discovery:estimate", estimateDiscoveryEnrichment);
+ipcMain.handle("relay:discovery:cancel", cancelDiscoveryEnrichment);
 ipcMain.handle("relay:storage:info", getStorageInfo);
 ipcMain.handle("relay:storage:open", openStorageLocation);
 ipcMain.handle("relay:directory:choose", chooseDirectory);

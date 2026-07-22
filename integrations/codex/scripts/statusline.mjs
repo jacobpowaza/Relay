@@ -1,8 +1,16 @@
 #!/usr/bin/env node
-// statusline.mjs — single-line Relay indicator for Claude Code's statusLine.
+// statusline.mjs — single-line Relay indicator.
 //
-// Reads Claude Code's stdin JSON to discover the workspace, then loads
-// ~/.relay/integrations/config.json and the Relay workspace to determine:
+// PLATFORM NOTE: Codex has no status line mechanism — there is no equivalent of
+// Claude Code's `statusLine` setting, and no config.toml key for it. This is
+// therefore an ON-DEMAND status command here, not a live indicator: run it
+// directly, or via the /relay command. The continuously-updating behavior only
+// exists on Claude Code. See integrations/README.md for the full divergence.
+//
+// Kept in step with the Claude Code copy apart from this note so the two
+// platforms report the same thing.
+//
+// Reads ~/.relay/integrations/config.json and the Relay workspace to determine:
 //   [RELAY] Disabled         — integration disabled in config
 //   [RELAY] Inactive         — no linked board for this repo
 //   [RELAY] Error            — linked board not found in workspace
@@ -12,11 +20,8 @@
 // When a discovery index exists it appends file/feature/changed counts.
 //
 // Accepts --cwd <path> for testing (skips stdin).
-//
-// Claude Code only. Codex exposes no status line mechanism; the same script is
-// shipped there as an on-demand status command. See integrations/README.md.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { canonicalizeRepositoryPath } from "./canonical-path.mjs";

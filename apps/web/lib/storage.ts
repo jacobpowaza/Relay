@@ -1,4 +1,5 @@
 import type {
+  DiscoveryEstimate,
   RelayAppSettingsResult,
   RelayBackgroundSettings,
   RelayDiagnosticsSnapshot,
@@ -7,7 +8,7 @@ import type {
   RelayUpdateSettings,
   RelayUpdateState,
 } from "./desktop";
-import type { ActivityRecord, CardNote, RelayCard, RelayTag, RelayTagTone, RelayWorkspaceData } from "./types";
+import type { ActivityRecord, CardNote, DiscoveryIndex, RelayBoard, RelayCard, RelayTag, RelayTagTone, RelayWorkspaceData } from "./types";
 
 export const defaultRelaySettings: Required<RelayWorkspaceData>["settings"] = {
   displayName: "Local User",
@@ -67,11 +68,72 @@ export async function initializeWorkspaceStore(): Promise<void> {
   return workspaceInitialization;
 }
 
+/**
+ * Reuses references from `previous` for any part of `next` that is deeply
+ * equal, so an external change produces new object identities only along the
+ * paths that actually changed.
+ *
+ * Without this, normalizeWorkspace rebuilds the whole graph on every write and
+ * useSyncExternalStore hands React an all-new tree: every card re-renders,
+ * identity-keyed components remount, and transient UI state (open modals,
+ * scroll position, in-flight edits) is discarded. That is the "app blanks out
+ * on any change" behavior.
+ *
+ * Arrays of entities are matched by `id` rather than index so that inserting
+ * or reordering a card does not invalidate its siblings.
+ */
+export function reconcile<T>(previous: T, next: T): T {
+  if (previous === next) return previous;
+  if (previous === null || next === null || typeof previous !== "object" || typeof next !== "object") {
+    return next;
+  }
+
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    const previousById = new Map<string, unknown>();
+    for (const item of previous) {
+      const id = (item as { id?: unknown })?.id;
+      if (typeof id === "string") previousById.set(id, item);
+    }
+
+    let identical = previous.length === next.length;
+    const merged: unknown[] = next.map((item, index) => {
+      const id = (item as { id?: unknown })?.id;
+      const candidate: unknown = typeof id === "string" && previousById.has(id)
+        ? previousById.get(id)
+        : previous[index];
+      const reconciled: unknown = candidate === undefined ? item : reconcile(candidate, item);
+      if (reconciled !== previous[index]) identical = false;
+      return reconciled;
+    });
+    return (identical ? previous : merged) as T;
+  }
+
+  if (Array.isArray(previous) !== Array.isArray(next)) return next;
+
+  const previousRecord = previous as Record<string, unknown>;
+  const nextRecord = next as Record<string, unknown>;
+  const nextKeys = Object.keys(nextRecord);
+  let identical = nextKeys.length === Object.keys(previousRecord).length;
+  const merged: Record<string, unknown> = {};
+
+  for (const key of nextKeys) {
+    const reconciled = key in previousRecord
+      ? reconcile(previousRecord[key], nextRecord[key])
+      : nextRecord[key];
+    merged[key] = reconciled;
+    if (reconciled !== previousRecord[key]) identical = false;
+  }
+
+  return (identical ? previous : merged) as T;
+}
+
 function subscribeToDesktopWorkspaceChanges(): void {
   if (typeof window === "undefined" || window.relayDesktop === undefined || desktopWorkspaceUnsubscribe !== null) return;
   desktopWorkspaceUnsubscribe = window.relayDesktop.onWorkspaceChanged((workspace) => {
-    const nextWorkspace = normalizeWorkspace(workspace);
-    if (JSON.stringify(nextWorkspace) === JSON.stringify(currentWorkspace)) return;
+    const nextWorkspace = reconcile(currentWorkspace, normalizeWorkspace(workspace));
+    // reconcile returns the previous reference outright when nothing changed,
+    // which makes this identity check exact rather than a JSON comparison.
+    if (nextWorkspace === currentWorkspace) return;
     currentWorkspace = nextWorkspace;
     listeners.forEach((listener) => listener());
   });
@@ -218,7 +280,15 @@ export function subscribeWorkspace(listener: () => void): () => void {
 export function setWorkspace(
   value: RelayWorkspaceData | ((current: RelayWorkspaceData) => RelayWorkspaceData),
 ): void {
-  currentWorkspace = normalizeWorkspace(typeof value === "function" ? value(currentWorkspace) : value);
+  const normalized = normalizeWorkspace(typeof value === "function" ? value(currentWorkspace) : value);
+  // Same structural sharing as the external-change path: a local edit to one
+  // card must not hand React a brand-new identity for every other card.
+  const nextWorkspace = reconcile(currentWorkspace, normalized);
+  // Identity is unchanged only when nothing actually changed. The save still
+  // runs either way, so a caller writing identical data to force persistence
+  // keeps working; only the re-render is skipped.
+  const changed = nextWorkspace !== currentWorkspace;
+  currentWorkspace = nextWorkspace;
   if (typeof window !== "undefined" && window.relayDesktop !== undefined) {
     const workspaceToSave = currentWorkspace;
     const save = workspaceSaveQueue
@@ -233,7 +303,7 @@ export function setWorkspace(
       saveErrorListeners.forEach((listener) => listener(message));
     });
   }
-  listeners.forEach((listener) => listener());
+  if (changed) listeners.forEach((listener) => listener());
 }
 
 export function subscribeWorkspaceSaveErrors(listener: (message: string) => void): () => void {
@@ -242,37 +312,59 @@ export function subscribeWorkspaceSaveErrors(listener: (message: string) => void
 }
 
 function normalizeWorkspace(workspace: RelayWorkspaceData): RelayWorkspaceData {
-  const boards = workspace.boards.map((board) => ({
-    ...board,
-    ...(board.archivedAt === undefined ? {} : { archivedAt: safeDate(board.archivedAt) }),
-    description: safeString(board.description),
-    repository: safeString(board.repository) || "No repository",
-    currentPhase: safeString(board.currentPhase) || "Planning",
-    progress: percent(board.progress),
-    activeTasks: wholeNumber(board.activeTasks),
-    blockers: wholeNumber(board.blockers),
-    lastActivity: safeDate(board.lastActivity),
-    owner: safeString(board.owner) || "Unassigned",
-    plan: safeString(board.plan),
-    columns: board.columns ?? [],
-    cards: (board.cards ?? []).map(normalizeCard),
-    phases: (board.phases ?? []).map((phase) => ({
-      ...phase,
-      name: safeString(phase.name) || "Ungrouped",
-      objective: safeString(phase.objective),
-      progress: percent(phase.progress),
-      status: phase.status === "complete" || phase.status === "in_progress" || phase.status === "planned" ? phase.status : "planned",
-    })),
-    context: board.context ?? [],
-    activity: (board.activity ?? []).map(normalizeActivity),
-    decisions: board.decisions ?? [],
-  }));
+  const discoveries: Record<string, DiscoveryIndex> = { ...(workspace.discoveries ?? {}) };
+  let migrated = false;
+
+  const boards = workspace.boards.map((board) => {
+    const boardAny = board as unknown as Record<string, unknown>;
+    const boardDiscovery = boardAny.discovery as DiscoveryIndex | undefined;
+    if (boardDiscovery !== undefined) {
+      const repoPath = boardAny.repository as string;
+      if (repoPath && repoPath !== "No repository") {
+        boardDiscovery.repoPath = repoPath;
+        // Must match discoveryKey() in the main process, or the migrated index
+        // lands under a key the backend never looks up and the repo rescans.
+        discoveries[repoPath.replace(/\/+$/, "").toLowerCase()] = boardDiscovery;
+      }
+      migrated = true;
+    }
+    const result: RelayBoard = {
+      id: board.id,
+      archivedAt: board.archivedAt,
+      directoryId: board.directoryId,
+      name: board.name,
+      description: safeString(board.description),
+      repository: safeString(board.repository) || "No repository",
+      currentPhase: safeString(board.currentPhase) || "Planning",
+      progress: percent(board.progress),
+      activeTasks: wholeNumber(board.activeTasks),
+      blockers: wholeNumber(board.blockers),
+      lastActivity: safeDate(board.lastActivity),
+      owner: safeString(board.owner) || "Unassigned",
+      plan: safeString(board.plan),
+      columns: board.columns ?? [],
+      cards: (board.cards ?? []).map(normalizeCard),
+      phases: (board.phases ?? []).map((phase) => ({
+        ...phase,
+        name: safeString(phase.name) || "Ungrouped",
+        objective: safeString(phase.objective),
+        progress: percent(phase.progress),
+        status: phase.status === "complete" || phase.status === "in_progress" || phase.status === "planned" ? phase.status : "planned",
+      })),
+      context: board.context ?? [],
+      activity: (board.activity ?? []).map(normalizeActivity),
+      decisions: board.decisions ?? [],
+    };
+    return result;
+  });
+
   return {
     ...workspace,
     boards,
     tags: normalizeTags(workspace.tags ?? [], boards),
     settings: { ...defaultRelaySettings, ...(workspace.settings ?? {}) },
-  };
+    discoveries: migrated ? discoveries : (workspace.discoveries ?? undefined),
+  } as RelayWorkspaceData;
 }
 
 function normalizeCard(card: RelayCard): RelayCard {
@@ -338,6 +430,85 @@ function toneForTag(name: string): RelayTagTone {
   for (const character of name.toLowerCase()) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   return tagTones[hash % tagTones.length] ?? "gray";
 }
+
+// --- discovery --------------------------------------------------------------------
+
+export async function startDiscovery(
+  repoPath: string,
+  options: { force?: boolean; discoveredBy?: string } = {},
+): Promise<DiscoveryIndex | null> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
+  const input: { repoPath: string; force?: boolean; discoveredBy?: string } = { repoPath };
+  if (options.force !== undefined) input.force = options.force;
+  if (options.discoveredBy !== undefined) input.discoveredBy = options.discoveredBy;
+  return window.relayDesktop.startDiscovery(input);
+}
+
+/** Stored index with status derived against current disk state. */
+export async function getDiscovery(repoPath: string): Promise<DiscoveryIndex | null> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
+  return window.relayDesktop.getDiscovery({ repoPath });
+}
+
+export async function getDiscoveryDiff(repoPath: string): Promise<unknown> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
+  return window.relayDesktop.getDiscoveryDiff({ repoPath });
+}
+
+export async function getDiscoveryAgents(): Promise<Array<{ id: string; label: string; models: Array<{ id: string; label: string }>; defaultModel: string }>> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return [];
+  return window.relayDesktop.getDiscoveryAgents();
+}
+
+/** Hybrid step: heuristics already indexed the repo, this upgrades purposes. */
+export async function enrichDiscovery(input: {
+  repoPath: string;
+  agent: string;
+  model?: string;
+  filePaths?: string[];
+  limit?: number;
+}): Promise<(DiscoveryIndex & { enriched: number; failed: string[]; error?: string; alreadyComplete?: boolean }) | null> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
+  return window.relayDesktop.enrichDiscovery(input);
+}
+
+/** Prices a run before it starts. Null outside the desktop shell, where no agent could be spawned anyway. */
+export async function estimateDiscoveryEnrichment(input: {
+  repoPath: string;
+  agent: string;
+  model?: string;
+  filePaths?: string[];
+  limit?: number;
+}): Promise<DiscoveryEstimate | null> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
+  return window.relayDesktop.estimateDiscoveryEnrichment(input);
+}
+
+export async function cancelDiscoveryEnrichment(repoPath: string): Promise<boolean> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return false;
+  const result = await window.relayDesktop.cancelDiscoveryEnrichment({ repoPath });
+  return result.cancelled;
+}
+
+export function onDiscoveryProgress(
+  callback: (progress: { repoPath: string; completed: number; total: number; phase: string }) => void,
+): () => void {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return () => {};
+  return window.relayDesktop.onDiscoveryProgress(callback);
+}
+
+export async function updateDiscoveryFiles(
+  repoPath: string,
+  filePaths: string[],
+  discoveredBy?: string,
+): Promise<unknown> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
+  const input: { repoPath: string; filePaths: string[]; discoveredBy?: string } = { repoPath, filePaths };
+  if (discoveredBy !== undefined) input.discoveredBy = discoveredBy;
+  return window.relayDesktop.updateDiscoveryFiles(input);
+}
+
+
 
 function normalizeActivity(activity: ActivityRecord): ActivityRecord {
   const normalizedActivity = {

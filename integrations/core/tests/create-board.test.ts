@@ -372,8 +372,11 @@ describe("token-efficient resume", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("[RELAY] Active");
     expect(result.stdout).toContain("Board:");
-    expect(result.stdout).toContain("Active card:");
     expect(result.stdout).toContain("Instruction:");
+    // Board creation no longer fabricates placeholder cards, so a request with
+    // no extractable work areas legitimately starts with an empty board.
+    // Resume must state that plainly rather than name an invented card.
+    expect(result.stdout).toMatch(/Active card:|No active card\./);
   });
 });
 

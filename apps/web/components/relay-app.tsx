@@ -73,11 +73,13 @@ import {
 import { SettingsModal as WorkspaceSettingsModal } from "./settings-modal";
 import { UpdatePopup } from "./update-center";
 import { GitCommitPanel } from "./git-commit-panel";
+import { DiscoveryView } from "./discovery-view";
 import {
   ConfirmDialog,
   ContextMenu,
   TextFieldModal,
   ToastShelf,
+  useIdleClass,
   type ContextMenuItem,
   type ToastMessage,
 } from "./ui-primitives";
@@ -105,6 +107,7 @@ const views: Array<{
   { id: "timeline", label: "Timeline", icon: Milestone },
   { id: "context", label: "Context", icon: BrainCircuit },
   { id: "decisions", label: "Decisions", icon: Lightbulb },
+  { id: "discovery", label: "Discovery", icon: Search },
   { id: "activity", label: "Activity", icon: History },
 ];
 
@@ -643,6 +646,7 @@ function Dashboard({
   onGitBoard,
   onRenameBoard,
   onCreateBoard,
+  onOpenDiscovery,
 }: {
   data: RelayWorkspaceData;
   directoryId: string;
@@ -656,6 +660,7 @@ function Dashboard({
   onGitBoard: (boardId: string) => void;
   onRenameBoard: (boardId: string) => void;
   onCreateBoard: () => void;
+  onOpenDiscovery: () => void;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   const normalizedSearch = search.trim().toLowerCase();
@@ -687,7 +692,28 @@ function Dashboard({
           <h1>Development work that remembers</h1>
           <p>Plans, evidence, and context stay attached to the project, not trapped in yesterday&apos;s session.</p>
         </div>
-        {nextBoard !== undefined && (
+        {directoryId !== "all" && (() => {
+          const dir = data.directories.find((item) => item.id === directoryId);
+          const dirPath = dir?.path;
+          const hasDiscovery = dirPath !== undefined && data.discoveries?.[dirPath] !== undefined;
+          const discovery = dirPath !== undefined ? data.discoveries?.[dirPath] : undefined;
+          return (
+            <button className="continue-card discovery-card" type="button" onClick={onOpenDiscovery} disabled={!dirPath}>
+              <div className="continue-signal"><Sparkles size={17} /></div>
+              <div>
+                <span className="eyebrow">Codebase Intelligence</span>
+                <strong>Project Discovery</strong>
+                {hasDiscovery && discovery ? (
+                  <p>{discovery.discoveryCount} files indexed · {discovery.features.length} features · Updated {formatRecordedTime(discovery.lastFullDiscovery ?? "")}</p>
+                ) : (
+                  <p>Scan this directory to build a codebase intelligence index</p>
+                )}
+              </div>
+              <ArrowRight size={20} />
+            </button>
+          );
+        })()}
+        {directoryId === "all" && nextBoard !== undefined && (
           <button className="continue-card" type="button" onClick={() => onOpenBoard(nextBoard.id)}>
             <div className="continue-signal"><Clock3 size={19} /></div>
             <div>
@@ -784,12 +810,18 @@ function CardTile({
   const columnIndex = columns.findIndex((column) => column.id === card.columnId);
   const notes = card.notes ?? [];
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   return (
     <article
-      className={cx("task-card", card.blocked && "blocked", card.archivedAt !== undefined && "archived")}
+      className={cx("task-card", card.blocked && "blocked", card.archivedAt !== undefined && "archived", dragging && "dragging")}
       draggable
-      onDragStart={(event) => event.dataTransfer.setData("text/relay-card", card.id)}
+      onDragStart={(event) => {
+        setDragging(true);
+        event.dataTransfer.setData("text/relay-card", card.id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      onDragEnd={() => setDragging(false)}
     >
       <button className="task-card-main" type="button" onClick={onOpen}>
         <div className="task-card-meta">
@@ -1028,9 +1060,13 @@ function BoardView({
               className="kanban-lane"
               key={column.id}
               onDragOver={(event) => {
-                if (event.dataTransfer.types.includes("text/relay-card")) event.preventDefault();
+                if (event.dataTransfer.types.includes("text/relay-card")) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }
               }}
               onDrop={(event) => {
+                event.preventDefault();
                 const cardId = event.dataTransfer.getData("text/relay-card");
                 if (cardId !== "") onMoveCard(cardId, column.id);
               }}
@@ -1500,6 +1536,10 @@ function CardDetail({
 }
 
 export function RelayApp() {
+  // Freezes looping animations while the window is hidden or unfocused. Mounted
+  // here because it is a whole-app concern and must be installed exactly once.
+  useIdleClass();
+
   const data = useSyncExternalStore(
     subscribeWorkspace,
     getWorkspaceSnapshot,
@@ -1509,6 +1549,8 @@ export function RelayApp() {
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [view, setView] = useState<RelayView>("board");
+  const [workspaceTab, setWorkspaceTab] = useState<"dashboard" | "discovery">("dashboard");
+  const [discoveryDirectoryPath, setDiscoveryDirectoryPath] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [expandedDirectoryIds, setExpandedDirectoryIds] = useState<Set<string>>(() => new Set());
@@ -2106,6 +2148,7 @@ export function RelayApp() {
     const board = data.boards.find((candidate) => candidate.id === boardId);
     if (board !== undefined) expandDirectory(board.directoryId);
     setSelectedBoardId(boardId);
+    setWorkspaceTab("dashboard");
     setView(nextView);
   }
 
@@ -2218,7 +2261,29 @@ export function RelayApp() {
           </aside>
 
           <div className="workspace-area">
-            {selectedBoard === undefined ? (
+            {selectedBoard === undefined && workspaceTab === "discovery" && discoveryDirectoryPath ? (
+              <main className="board-workspace">
+                <header className="board-header">
+                  <div className="board-title-row">
+                    <button className="icon-button" type="button" onClick={() => setWorkspaceTab("dashboard")} aria-label="Back to dashboard"><ArrowLeft size={18} /></button>
+                    <div className="board-title-icon"><Search size={19} /></div>
+                    <div><span className="eyebrow">{discoveryDirectoryPath}</span><h1>Project Discovery</h1></div>
+                  </div>
+                </header>
+                <div className="view-content">
+                  <DiscoveryView
+                    repoPath={discoveryDirectoryPath}
+                    discovery={data.discoveries?.[discoveryDirectoryPath]}
+                    onDiscoveryUpdate={(updated) => {
+                      setWorkspace((current) => ({
+                        ...current,
+                        discoveries: { ...current.discoveries, [discoveryDirectoryPath]: updated },
+                      }));
+                    }}
+                  />
+                </div>
+              </main>
+            ) : selectedBoard === undefined ? (
               <Dashboard
                 data={data}
                 directoryId={directoryId}
@@ -2232,12 +2297,16 @@ export function RelayApp() {
                 onOpenStorage={openStorage}
                 onOpenBoard={(boardId) => startTransition(() => selectBoard(boardId))}
                 onCreateBoard={() => setCreateOpen(true)}
+                onOpenDiscovery={() => {
+                  const dir = data.directories.find((item) => item.id === directoryId);
+                  if (dir?.path) { setDiscoveryDirectoryPath(dir.path); setWorkspaceTab("discovery"); }
+                }}
               />
             ) : (
               <main className="board-workspace">
                 <header className="board-header">
                   <div className="board-title-row">
-                    <button className="icon-button" type="button" onClick={() => setSelectedBoardId(null)} aria-label="Back to dashboard"><ArrowLeft size={18} /></button>
+                    <button className="icon-button" type="button" onClick={() => { setSelectedBoardId(null); setWorkspaceTab("dashboard"); }} aria-label="Back to dashboard"><ArrowLeft size={18} /></button>
                     <div className="board-title-icon"><Code2 size={19} /></div>
                     <div><span className="eyebrow">{selectedBoard.repository}</span><button className="board-name-button" type="button" onClick={() => renameBoard(selectedBoard.id)} aria-label={`Rename ${selectedBoard.name}`}><h1>{selectedBoard.name}</h1><Edit3 size={13} /></button></div>
                     <span className="phase-pill"><i /> {selectedBoard.currentPhase}</span>
@@ -2256,6 +2325,23 @@ export function RelayApp() {
                   {view === "decisions" && <DecisionsView board={selectedBoard} onAddDecision={addDecision} />}
                   {view === "activity" && <ActivityView board={selectedBoard} />}
                   {view === "blockers" && <BlockersView board={selectedBoard} />}
+                  {view === "discovery" && (() => {
+                    const repoPath = selectedBoard.repository !== "No repository" ? selectedBoard.repository : "";
+                    return repoPath ? (
+                      <DiscoveryView
+                        repoPath={repoPath}
+                        discovery={data.discoveries?.[repoPath]}
+                        onDiscoveryUpdate={(updated) => {
+                          setWorkspace((current) => ({
+                            ...current,
+                            discoveries: { ...current.discoveries, [repoPath]: updated },
+                          }));
+                        }}
+                      />
+                    ) : (
+                      <div className="empty-state"><Search size={24} /><h3>No Repository Linked</h3><p>Link this board to a local project directory to enable code discovery.</p></div>
+                    );
+                  })()}
                 </div>
               </main>
             )}
