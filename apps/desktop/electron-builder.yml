@@ -4,7 +4,7 @@ directories:
   output: release
 
 files:
-  # Electron main process files (all 12 .cjs modules)
+  # Electron main process files (all 14 .cjs modules)
   - src/main.cjs
   - src/preload.cjs
   - src/workspace-storage.cjs
@@ -17,6 +17,8 @@ files:
   - src/tray-service.cjs
   - src/updater-service.cjs
   - src/diagnostics-service.cjs
+  - src/discovery.cjs
+  - src/enrichment.cjs
 
   # App metadata (name, version, license)
   - package.json
