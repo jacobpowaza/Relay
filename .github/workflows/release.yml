@@ -38,7 +38,7 @@ jobs:
             exit 1
           fi
 
-  build-mac-arm64:
+  build-mac:
     needs: [validate]
     runs-on: macos-latest
     steps:
@@ -53,53 +53,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: rm -rf apps/desktop/release
-      - run: pnpm exec electron-builder --config electron-builder.yml --arm64 --publish never
+      - run: pnpm exec electron-builder --config electron-builder.yml --publish never
         working-directory: apps/desktop
+      - name: Verify macOS disk images
+        working-directory: apps/desktop/release
+        run: |
+          for image in *.dmg; do
+            hdiutil verify "$image"
+          done
       - name: Generate checksums
         working-directory: apps/desktop/release
         run: |
-          shasum -a 256 *.dmg *.zip *.blockmap 2>/dev/null | tee checksums-mac-arm64.txt
+          shasum -a 256 *.dmg *.zip *.blockmap 2>/dev/null | tee checksums-mac.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: release-mac-arm64
+          name: release-mac
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.blockmap
             apps/desktop/release/latest-mac.yml
-            apps/desktop/release/checksums-mac-arm64.txt
-          if-no-files-found: error
-
-  build-mac-x64:
-    needs: [validate]
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.10.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: rm -rf apps/desktop/release
-      - run: pnpm exec electron-builder --config electron-builder.yml --x64 --publish never
-        working-directory: apps/desktop
-      - name: Generate checksums
-        working-directory: apps/desktop/release
-        run: |
-          shasum -a 256 *.dmg *.zip *.blockmap 2>/dev/null | tee checksums-mac-x64.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-mac-x64
-          path: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/latest-mac.yml
-            apps/desktop/release/checksums-mac-x64.txt
+            apps/desktop/release/checksums-mac.txt
           if-no-files-found: error
 
   build-win:
@@ -169,7 +143,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [build-mac-arm64, build-mac-x64, build-win, build-linux]
+    needs: [build-mac, build-win, build-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

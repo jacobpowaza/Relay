@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1] — 2026-07-22
+
+### Installers
+
+- Fixed the release pipeline so each macOS architecture is packaged once, preventing installer assets from being overwritten during publication
+- Added macOS disk-image verification to the release build; a corrupted `.dmg` now fails the release before it can be uploaded
+- Gave Windows x64 and ARM64 installers distinct, architecture-specific filenames
+
 ## [0.3.0] — 2026-07-21
 
 ### Discovery

@@ -100,6 +100,8 @@ mac:
 
 win:
   icon: build/icon.png
+  # Keep x64 and ARM64 installers distinct when both are built in one job.
+  artifactName: Relay-Setup-${version}-${arch}.${ext}
   target:
     - target: nsis
       arch:

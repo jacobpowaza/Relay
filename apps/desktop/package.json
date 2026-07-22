@@ -3,7 +3,7 @@
   "productName": "Relay",
   "description": "Development planning and context that stays with the project.",
   "author": "Relay",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
