@@ -53,7 +53,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: rm -rf apps/desktop/release
-      - run: pnpm --filter @relay/desktop package
+      - run: pnpm --filter @relay/desktop package -- --arm64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate checksums
@@ -68,7 +68,7 @@ jobs:
 
   build-mac-x64:
     needs: [validate]
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -81,7 +81,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: rm -rf apps/desktop/release
-      - run: pnpm --filter @relay/desktop package
+      - run: pnpm --filter @relay/desktop package -- --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate checksums
