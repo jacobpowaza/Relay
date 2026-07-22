@@ -63,7 +63,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-mac-arm64
-          path: apps/desktop/release/
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
+            apps/desktop/release/checksums-mac-arm64.txt
           if-no-files-found: error
 
   build-mac-x64:
@@ -91,7 +96,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-mac-x64
-          path: apps/desktop/release/
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
+            apps/desktop/release/checksums-mac-x64.txt
           if-no-files-found: error
 
   build-win:
@@ -123,7 +133,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-win
-          path: apps/desktop/release/
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest.yml
+            apps/desktop/release/checksums-win.txt
           if-no-files-found: error
 
   build-linux:
@@ -151,7 +165,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
-          path: apps/desktop/release/
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-linux.yml
+            apps/desktop/release/checksums-linux.txt
           if-no-files-found: error
 
   publish:
@@ -168,6 +186,13 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**
+          files: |
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.AppImage
+            artifacts/*.exe
+            artifacts/*.blockmap
+            artifacts/*.yml
+            artifacts/checksums-*.txt
           generate_release_notes: true
           fail_on_unmatched_files: false
