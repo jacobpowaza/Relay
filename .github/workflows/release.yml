@@ -53,9 +53,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: rm -rf apps/desktop/release
-      - run: pnpm --filter @relay/desktop package -- --arm64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm exec electron-builder --config electron-builder.yml --arm64 --publish never
+        working-directory: apps/desktop
       - name: Generate checksums
         working-directory: apps/desktop/release
         run: |
@@ -86,9 +85,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: rm -rf apps/desktop/release
-      - run: pnpm --filter @relay/desktop package -- --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm exec electron-builder --config electron-builder.yml --x64 --publish never
+        working-directory: apps/desktop
       - name: Generate checksums
         working-directory: apps/desktop/release
         run: |
@@ -119,9 +117,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
-      - run: pnpm --filter @relay/desktop package
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm exec electron-builder --config electron-builder.yml --publish never
+        working-directory: apps/desktop
       - name: Generate checksums
         shell: pwsh
         working-directory: apps/desktop/release
@@ -155,9 +152,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: rm -rf apps/desktop/release
-      - run: pnpm --filter @relay/desktop package
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm exec electron-builder --config electron-builder.yml --publish never
+        working-directory: apps/desktop
       - name: Generate checksums
         working-directory: apps/desktop/release
         run: |
