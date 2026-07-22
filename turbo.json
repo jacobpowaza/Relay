@@ -5,6 +5,12 @@
       "dependsOn": ["^build"],
       "outputs": [".next/**", "dist/**", "!.next/cache/**"]
     },
+    "@relay/claude-code-integration#build": {
+      "dependsOn": ["^build", "@relay/integration-core#build"]
+    },
+    "@relay/codex-integration#build": {
+      "dependsOn": ["^build", "@relay/integration-core#build"]
+    },
     "dev": {
       "cache": false,
       "persistent": true
