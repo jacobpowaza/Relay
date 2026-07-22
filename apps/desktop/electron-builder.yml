@@ -81,9 +81,12 @@ publish:
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns
+  identity: null
   hardenedRuntime: true
   gatekeeperAssess: false
   # entitlements: build/entitlements.mac.plist   # add when signing/notarizing
+  # CSC_LINK / CSC_KEY_PASSWORD / APPLE_* secrets — add to repo secrets and
+  # remove `identity: null` above when ready to sign and notarize.
   target:
     # DMG for first install; ZIP is required for macOS auto-update.
     - target: dmg
@@ -112,5 +115,6 @@ nsis:
 linux:
   category: Development
   icon: build/icon.png
+  executableName: Relay
   target:
     - AppImage
