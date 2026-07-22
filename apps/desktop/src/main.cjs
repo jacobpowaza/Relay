@@ -1,7 +1,7 @@
 const path = require("node:path");
 
 const { mkdirSync, watch } = require("node:fs");
-const { mkdir, readFile, rename, writeFile } = require("node:fs/promises");
+const { mkdir, readFile, rename, stat, writeFile } = require("node:fs/promises");
 const { randomUUID } = require("node:crypto");
 const { homedir } = require("node:os");
 const { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } = require("electron");
@@ -22,7 +22,7 @@ const { createTrayService } = require("./tray-service.cjs");
 const { createUpdaterService } = require("./updater-service.cjs");
 const { createDiagnosticsService } = require("./diagnostics-service.cjs");
 const { buildEntry, discoverRepository, diffDiscovery, withDerivedStatus } = require("./discovery.cjs");
-const { enrichEntries, listAgents } = require("./enrichment.cjs");
+const { enrichEntries, estimateEnrichmentCost, listAgents } = require("./enrichment.cjs");
 
 app.setName("Relay");
 
@@ -972,6 +972,51 @@ async function enrichDiscovery(event, input) {
 }
 
 /**
+ * Prices an enrichment run before it starts, so the "Discover with ..." button
+ * can warn instead of silently spending.
+ *
+ * Selects exactly the same candidate set enrichDiscovery would — unenriched
+ * entries, or an explicit selection, capped by the same limit. An estimate
+ * computed over a different set of files than the run will touch is worse than
+ * no estimate at all. Sizes come from stat rather than from the stored index,
+ * because the index records a content hash, not a length.
+ *
+ * @param {import("electron").IpcMainInvokeEvent} _event
+ * @param {{ repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }} input
+ */
+async function estimateDiscoveryEnrichment(_event, input) {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("Estimate input is required.");
+  if (typeof input.repoPath !== "string" || input.repoPath.trim() === "") throw new Error("A repository path is required.");
+  if (typeof input.agent !== "string" || input.agent.trim() === "") throw new Error("An agent is required.");
+
+  const workspace = await loadWorkspace();
+  const discovery = readDiscovery(workspace, input.repoPath);
+  if (!discovery) throw new Error("No discovery index exists for this repo path. Run discovery first.");
+
+  /** @type {Array<any>} */
+  const entries = discovery.entries ?? [];
+  const candidates = Array.isArray(input.filePaths) && input.filePaths.length > 0
+    ? input.filePaths
+    : entries.filter((/** @type {any} */ e) => e.enriched !== true).map((/** @type {any} */ e) => e.filePath);
+  const limit = typeof input.limit === "number" && input.limit > 0 ? input.limit : candidates.length;
+  const filePaths = candidates.slice(0, limit);
+
+  /** @type {number[]} */
+  const fileSizes = [];
+  for (const relativePath of filePaths) {
+    try {
+      const info = await stat(path.resolve(input.repoPath, relativePath));
+      fileSizes.push(info.size);
+    } catch {
+      // A file that vanished since the last scan is skipped by buildPrompt too,
+      // so leaving it out of the estimate keeps the two consistent.
+    }
+  }
+
+  return estimateEnrichmentCost({ agent: input.agent, model: input.model, fileSizes });
+}
+
+/**
  * @param {import("electron").IpcMainInvokeEvent} _event
  * @param {{ repoPath: string }} input
  */
@@ -993,6 +1038,7 @@ ipcMain.handle("relay:discovery:diff", getDiscoveryDiff);
 ipcMain.handle("relay:discovery:update", updateDiscoveryFiles);
 ipcMain.handle("relay:discovery:agents", getDiscoveryAgents);
 ipcMain.handle("relay:discovery:enrich", enrichDiscovery);
+ipcMain.handle("relay:discovery:estimate", estimateDiscoveryEnrichment);
 ipcMain.handle("relay:discovery:cancel", cancelDiscoveryEnrichment);
 ipcMain.handle("relay:storage:info", getStorageInfo);
 ipcMain.handle("relay:storage:open", openStorageLocation);

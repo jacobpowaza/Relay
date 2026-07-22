@@ -79,6 +79,7 @@ import {
   ContextMenu,
   TextFieldModal,
   ToastShelf,
+  useIdleClass,
   type ContextMenuItem,
   type ToastMessage,
 } from "./ui-primitives";
@@ -697,8 +698,8 @@ function Dashboard({
           const hasDiscovery = dirPath !== undefined && data.discoveries?.[dirPath] !== undefined;
           const discovery = dirPath !== undefined ? data.discoveries?.[dirPath] : undefined;
           return (
-            <button className="continue-card" type="button" onClick={onOpenDiscovery} disabled={!dirPath}>
-              <div className="continue-signal"><Search size={19} /></div>
+            <button className="continue-card discovery-card" type="button" onClick={onOpenDiscovery} disabled={!dirPath}>
+              <div className="continue-signal"><Sparkles size={17} /></div>
               <div>
                 <span className="eyebrow">Codebase Intelligence</span>
                 <strong>Project Discovery</strong>
@@ -1535,6 +1536,10 @@ function CardDetail({
 }
 
 export function RelayApp() {
+  // Freezes looping animations while the window is hidden or unfocused. Mounted
+  // here because it is a whole-app concern and must be installed exactly once.
+  useIdleClass();
+
   const data = useSyncExternalStore(
     subscribeWorkspace,
     getWorkspaceSnapshot,

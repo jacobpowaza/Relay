@@ -84,8 +84,19 @@ process.stdin.on("end", async () => {
         if (updated) {
           const raw = JSON.parse(readFileSync(workspacePath, "utf8"));
           if (raw.discoveries === undefined) raw.discoveries = {};
-          raw.discoveries[repoPath] = discovery;
-          writeFileSync(workspacePath, JSON.stringify(raw, null, 2), { mode: 0o600 });
+          // MUST be the normalized key. Writing under the raw path created a
+          // second, orphaned entry that neither the app nor the hooks ever read,
+          // leaving the real index on stale hashes forever.
+          raw.discoveries[core.discoveryKey(repoPath)] = discovery;
+          // Write to a temp file and rename, the way every other writer in this
+          // codebase does. A direct write here is a truncation window over the
+          // user's ENTIRE workspace — boards, cards and notes, not just the
+          // discovery index — if the process dies or the disk fills mid-write.
+          const { randomUUID } = await import("node:crypto");
+          const { renameSync } = await import("node:fs");
+          const temporaryPath = `${workspacePath}.${process.pid}.${randomUUID()}.tmp`;
+          writeFileSync(temporaryPath, JSON.stringify(raw, null, 2), { mode: 0o600 });
+          renameSync(temporaryPath, workspacePath);
         }
       }
     }

@@ -1,4 +1,5 @@
 import type {
+  DiscoveryEstimate,
   RelayAppSettingsResult,
   RelayBackgroundSettings,
   RelayDiagnosticsSnapshot,
@@ -469,6 +470,18 @@ export async function enrichDiscovery(input: {
 }): Promise<(DiscoveryIndex & { enriched: number; failed: string[]; error?: string; alreadyComplete?: boolean }) | null> {
   if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
   return window.relayDesktop.enrichDiscovery(input);
+}
+
+/** Prices a run before it starts. Null outside the desktop shell, where no agent could be spawned anyway. */
+export async function estimateDiscoveryEnrichment(input: {
+  repoPath: string;
+  agent: string;
+  model?: string;
+  filePaths?: string[];
+  limit?: number;
+}): Promise<DiscoveryEstimate | null> {
+  if (typeof window === "undefined" || window.relayDesktop === undefined) return null;
+  return window.relayDesktop.estimateDiscoveryEnrichment(input);
 }
 
 export async function cancelDiscoveryEnrichment(repoPath: string): Promise<boolean> {

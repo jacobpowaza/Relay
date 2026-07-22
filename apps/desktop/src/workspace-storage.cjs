@@ -31,6 +31,14 @@ function validateWorkspace(value) {
   if ("settings" in value && value.settings !== undefined) {
     workspace.settings = value.settings;
   }
+  // Dropped silently before this line was added: every load and save round-
+  // tripped through validateWorkspace without ever copying `discoveries`
+  // across, so a freshly scanned index never survived being written to disk
+  // — the very next read (e.g. the estimate step right after a scan) saw an
+  // empty workspace and reported "No discovery index exists".
+  if ("discoveries" in value && value.discoveries !== undefined) {
+    workspace.discoveries = /** @type {Record<string, any>} */ (value.discoveries);
+  }
   return workspace;
 }
 

@@ -6,7 +6,19 @@ const IGNORED_DIRECTORIES = new Set([
   ".git", "node_modules", ".next", "dist", "build", ".turbo",
   "coverage", ".nyc_output", "__pycache__", ".venv", "venv",
   ".cache", ".vscode", ".idea", "vendor", ".relay",
+  // Packaged app / native build output. Without these, a packaged Electron
+  // app (Relay.app/Contents/Resources/...) or a mobile build gets walked and
+  // indexed as if it were source — hundreds of duplicate, non-editable files.
+  "release", "out", "target", "bin", "obj",
+  "Pods", "DerivedData", "Carthage", ".dart_tool", ".gradle",
+  ".parcel-cache", ".svelte-kit", ".output", ".vercel", ".serverless",
+  ".expo", "Debug", "Release",
 ]);
+
+// Directories that are themselves build artifacts regardless of where they
+// sit in the tree — a macOS app bundle can appear anywhere a release step
+// drops it, not just under a directory named "release".
+const IGNORED_DIRECTORY_SUFFIXES = [".app", ".framework", ".xcodeproj", ".xcworkspace", ".xcarchive"];
 
 const IGNORED_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp",
@@ -42,6 +54,7 @@ async function walkDirectory(dirPath, rootPath = dirPath) {
   }
   for (const entry of entries) {
     if (entry.name.startsWith(".") || IGNORED_DIRECTORIES.has(entry.name)) continue;
+    if (entry.isDirectory() && IGNORED_DIRECTORY_SUFFIXES.some((suffix) => entry.name.endsWith(suffix))) continue;
     const fullPath = path.join(dirPath, entry.name);
     if (entry.isDirectory()) {
       // Resolve against the repo root, not the current subdirectory, or nested
@@ -157,6 +170,41 @@ function extractImports(content, relativePath, ext) {
   return imports.filter((imp) => !imp.includes("node_modules")).slice(0, 12);
 }
 
+// Filename-specific overrides, checked before any directory- or content-based
+// guess. These are exact, well-known files whose purpose is fixed by their
+// name — matching them against the full path (as the generic patterns below
+// do) is how a `package.json` sitting under `apps/api/` used to inherit
+// "API route and request handler" from its parent directory's name.
+const FILENAME_PATTERNS = [
+  { match: /^package\.json$/, purpose: "Package manifest and dependency list" },
+  { match: /^tsconfig(\..+)?\.json$/, purpose: "TypeScript compiler configuration" },
+  { match: /^(vite|webpack|rollup|esbuild)\.config\.(m?[jt]s|cjs)$/, purpose: "Build tool configuration" },
+  { match: /^(babel|jest|vitest)\.config\.(m?[jt]s|cjs|json)$/, purpose: "Test/transpile tool configuration" },
+  { match: /^\.?eslintrc(\..+)?$|^eslint\.config\.(m?[jt]s|cjs)$/, purpose: "Lint rule configuration" },
+  { match: /^\.?prettierrc(\..+)?$|^prettier\.config\.(m?[jt]s|cjs)$/, purpose: "Code formatting configuration" },
+  { match: /^electron-builder\.(yml|yaml|json|js)$/, purpose: "Electron packaging and release configuration" },
+  { match: /^app-update\.yml$/, purpose: "Electron auto-update feed configuration" },
+  { match: /^Dockerfile(\..+)?$/, purpose: "Container build definition" },
+  { match: /^docker-compose(\..+)?\.ya?ml$/, purpose: "Container orchestration configuration" },
+  { match: /^README(\..+)?$/i, purpose: "Project documentation" },
+  { match: /^CHANGELOG(\..+)?$/i, purpose: "Change history and release notes" },
+  { match: /^\.env(\..+)?$/, purpose: "Environment variable configuration" },
+];
+
+// Directory names strong enough to signal purpose on their own, but only for
+// files that are still ambiguous by name — and matched as a whole path
+// segment, not a substring, so `apps/api-docs/foo.ts` doesn't match `api`.
+const STRUCTURAL_DIRECTORIES = [
+  { match: /^(api|routes?)$/i, purpose: "API route and request handler" },
+  { match: /^(controllers?)$/i, purpose: "Request controller" },
+  { match: /^(middlewares?)$/i, purpose: "Request middleware and interceptors" },
+  { match: /^(hooks?)$/i, purpose: "React hook" },
+  { match: /^(components?)$/i, purpose: "UI component" },
+  { match: /^(pages?|views?)$/i, purpose: "Page layout and routing" },
+  { match: /^(migrations?)$/i, purpose: "Database migration" },
+  { match: /^(workers?|jobs?|queues?)$/i, purpose: "Background worker and job processing" },
+];
+
 /**
  * @param {string} relativePath
  * @param {string} ext
@@ -165,22 +213,32 @@ function extractImports(content, relativePath, ext) {
  */
 function inferPurpose(relativePath, ext, exports) {
   const name = path.basename(relativePath, ext);
+  const basename = path.basename(relativePath);
   const dirs = relativePath.split(path.sep);
   const parentDir = (dirs.length > 1 ? dirs[dirs.length - 2] : "") ?? "";
 
+  for (const pattern of FILENAME_PATTERNS) {
+    if (pattern.match.test(basename)) return pattern.purpose;
+  }
+
+  // Content-derived patterns, matched against the filename first (not the
+  // full path — a directory called "api-utils" would otherwise satisfy the
+  // "util" pattern via substring match on unrelated ancestors). Tests are
+  // checked ahead of everything else in this group so a spec file living
+  // under a feature directory is never mislabeled as that feature's own code.
   const patterns = [
+    { match: /test|spec|e2e|cypress|playwright|vitest|jest|unit/i, purpose: "Tests and test utilities" },
     { match: /auth|login|session|oauth|jwt|token/i, purpose: "Authentication and authorization" },
     { match: /user|profile|account/i, purpose: "User and account management" },
     { match: /payment|stripe|billing|checkout|invoice/i, purpose: "Payment and billing processing" },
-    { match: /database|db|schema|model|entity|repository|prisma|drizzle|typeorm/i, purpose: "Database model and data access" },
-    { match: /api|route|endpoint|controller|handler/i, purpose: "API route and request handler" },
+    { match: /database|schema|model|entity|repository|prisma|drizzle|typeorm/i, purpose: "Database model and data access" },
+    { match: /route|endpoint|controller|handler/i, purpose: "API route and request handler" },
     { match: /middleware/i, purpose: "Request middleware and interceptors" },
-    { match: /hook|use[A-Z]/i, purpose: "React hook" },
-    { match: /component|ui|button|card|modal|form|input|select|dialog|tooltip/i, purpose: "UI component" },
+    { match: /^use[A-Z]/, purpose: "React hook" },
+    { match: /component|button|card|modal|form|input|select|dialog|tooltip/i, purpose: "UI component" },
     { match: /layout|page/i, purpose: "Page layout and routing" },
     { match: /style|css|theme|design-token/i, purpose: "Styles and design tokens" },
-    { match: /test|spec|e2e|cypress|playwright|vitest|jest|unit/i, purpose: "Tests and test utilities" },
-    { match: /util|helper|common|shared|lib/i, purpose: "Shared utilities and helpers" },
+    { match: /util|helper|common|shared/i, purpose: "Shared utilities and helpers" },
     { match: /config|setting|env|constant/i, purpose: "Configuration and constants" },
     { match: /error|exception|fallback|boundary/i, purpose: "Error handling and boundaries" },
     { match: /provider|context/i, purpose: "React context provider" },
@@ -191,14 +249,18 @@ function inferPurpose(relativePath, ext, exports) {
     { match: /search|query|filter/i, purpose: "Search and query logic" },
     { match: /cache|redis|memcache/i, purpose: "Caching layer" },
     { match: /log|monitor|metric|trace|observability/i, purpose: "Logging and observability" },
-    { match: /validat|sanitize|parse|schema/i, purpose: "Validation and data parsing" },
+    { match: /validat|sanitize|parse/i, purpose: "Validation and data parsing" },
     { match: /migration|seed/i, purpose: "Database migration and seeding" },
-    { match: /docker|compose|container|deploy|ci|cd/i, purpose: "Deployment and infrastructure configuration" },
-    { match: /index/i, purpose: "Module index and re-exports" },
+    { match: /docker|compose|deploy/i, purpose: "Deployment and infrastructure configuration" },
+    { match: /^index$/i, purpose: "Module index and re-exports" },
   ];
 
   for (const pattern of patterns) {
-    if (pattern.match.test(relativePath) || pattern.match.test(parentDir)) return pattern.purpose;
+    if (pattern.match.test(basename)) return pattern.purpose;
+  }
+
+  for (const dir of STRUCTURAL_DIRECTORIES) {
+    if (dir.match.test(parentDir)) return dir.purpose;
   }
 
   if (exports.length > 0) {

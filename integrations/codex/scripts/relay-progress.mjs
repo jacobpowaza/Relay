@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { canonicalizeRepositoryPath } from "./canonical-path.mjs";
 
@@ -808,7 +808,7 @@ async function createBoard() {
 
     let directory = workspace.directories.find((item) => item.path !== undefined && sameRepositoryPath(item.path, repository.root));
     if (directory === undefined) {
-      directory = { id: randomUUID(), name: title, path: repository.root };
+      directory = { id: randomUUID(), name: basename(repository.root), path: repository.root };
       workspace.directories.push(directory);
     } else if (directory.path === undefined) {
       directory.path = repository.root;

@@ -226,6 +226,22 @@ export interface DiscoveryAgent {
   defaultModel: string;
 }
 
+/**
+ * Pre-run cost projection for an enrichment pass. `costUsd` is null whenever the
+ * chosen model has no known per-token price — Codex bills against a ChatGPT
+ * plan, so for it the honest answer is tokens only and never a dollar figure.
+ */
+export interface DiscoveryEstimate {
+  agent: string;
+  model: string;
+  files: number;
+  batches: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+  approximate: true;
+}
+
 export interface DiscoveryProgress {
   repoPath: string;
   completed: number;
@@ -282,6 +298,7 @@ interface RelayDesktopApi {
   updateDiscoveryFiles: (input: { repoPath: string; filePaths: string[]; discoveredBy?: string }) => Promise<DiscoveryIndex & { applied: { added: number; updated: number; removed: number } }>;
   getDiscoveryAgents: () => Promise<DiscoveryAgent[]>;
   enrichDiscovery: (input: { repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }) => Promise<DiscoveryIndex & { enriched: number; failed: string[]; error?: string; alreadyComplete?: boolean }>;
+  estimateDiscoveryEnrichment: (input: { repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }) => Promise<DiscoveryEstimate>;
   cancelDiscoveryEnrichment: (input: { repoPath: string }) => Promise<{ cancelled: boolean }>;
   onDiscoveryProgress: (callback: (progress: DiscoveryProgress) => void) => () => void;
 }

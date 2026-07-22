@@ -27,6 +27,18 @@ export interface DiscoveryIndex {
     discoveryCount: number;
     version: number;
 }
+/**
+ * The one true normalization for `discoveries` map keys: trailing slashes
+ * stripped, lowercased. Must stay identical to discoveryKey() in the desktop
+ * main process and to the migration in apps/web/lib/storage.ts.
+ *
+ * Exported as a shared helper because the rule was previously copy-pasted into
+ * four places and one copy drifted: session-end.mjs wrote back under the RAW
+ * path, so on any repo path containing an uppercase letter it created a second,
+ * orphaned entry that nothing ever read — while the real index silently kept
+ * its stale hashes. Callers must use this rather than re-deriving it.
+ */
+export declare function discoveryKey(repoPath: string): string;
 export declare function loadDiscoveryFromWorkspace(workspacePath: string, repoPath: string): DiscoveryIndex | null;
 /**
  * Splits entries into those whose file changed since indexing and those whose

@@ -28,7 +28,7 @@ import {
   setIntegrationConfig,
 } from "../lib/storage";
 import { useRelayUpdates } from "./update-center";
-import { useEscapeKey, useFocusTrap } from "./ui-primitives";
+import { useDocumentVisible, useEscapeKey, useFocusTrap } from "./ui-primitives";
 
 import type {
   RelayAppSettings,
@@ -104,6 +104,7 @@ export function SettingsModal({
   useEscapeKey(onClose);
 
   const desktop = isDesktopRuntime();
+  const documentVisible = useDocumentVisible();
 
   useEffect(() => {
     if (!desktop) return;
@@ -117,15 +118,17 @@ export function SettingsModal({
   }, [desktop]);
 
   // Diagnostics are dev-only; poll on-demand while the Background tab is open,
-  // never in the background — keeping the idle-CPU guarantee intact.
+  // never in the background — keeping the idle-CPU guarantee intact. Also
+  // suspended while the document is hidden: the tab being open is not a reason
+  // to keep a 2s timer alive behind a minimized window on battery.
   useEffect(() => {
-    if (!desktop || tab !== "background") return;
+    if (!desktop || tab !== "background" || !documentVisible) return;
     let active = true;
     const load = () => { void getDiagnostics().then((snapshot) => { if (active) setDiagnostics(snapshot); }); };
     load();
     const interval = window.setInterval(load, 2000);
     return () => { active = false; window.clearInterval(interval); };
-  }, [desktop, tab]);
+  }, [desktop, tab, documentVisible]);
 
   const patchUpdateSettings = useCallback(async (patch: Partial<RelayAppSettings["updates"]>) => {
     setAppSettingsState((current) => (current === null ? current : { ...current, updates: { ...current.updates, ...patch } }));

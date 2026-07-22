@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld("relayDesktop", {
   getDiscoveryAgents: () => ipcRenderer.invoke("relay:discovery:agents"),
   /** @param {{ repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }} input */
   enrichDiscovery: (input) => ipcRenderer.invoke("relay:discovery:enrich", input),
+  /** @param {{ repoPath: string; agent: string; model?: string; filePaths?: string[]; limit?: number }} input */
+  estimateDiscoveryEnrichment: (input) => ipcRenderer.invoke("relay:discovery:estimate", input),
   /** @param {{ repoPath: string }} input */
   cancelDiscoveryEnrichment: (input) => ipcRenderer.invoke("relay:discovery:cancel", input),
   /** @param {(progress: unknown) => void} callback */

@@ -101,6 +101,13 @@ export interface DiscoveryEntry {
   discoveredBy: string;
   confidence: "high" | "medium" | "low";
   status: "current" | "changed" | "new" | "stale" | "never";
+  /**
+   * True once an agent wrote this purpose, absent while it is still the
+   * heuristic pattern-match. Also the ledger the enrichment run bills against:
+   * the default candidate set is every entry where this is not true, so a
+   * re-run never re-pays for a summary it already has.
+   */
+  enriched?: boolean;
 }
 
 export interface DiscoveryFeature {
@@ -120,6 +127,9 @@ export interface DiscoveryIndex {
   staleRelationshipCount: number;
   discoveryCount: number;
   version: number;
+  /** Written by the enrichment pass; both absent until one has run. */
+  enrichedCount?: number;
+  lastEnrichment?: string;
 }
 
 export interface RelayBoard {

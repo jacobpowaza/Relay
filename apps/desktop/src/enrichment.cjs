@@ -1,5 +1,6 @@
 const { spawn } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
+const { writeFileSync } = require("node:fs");
 const { readFile, rm } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
@@ -20,8 +21,13 @@ const path = require("node:path");
  * @property {string} command
  * @property {Array<{ id: string; label: string }>} models
  * @property {string} defaultModel
- * @property {(model: string, outputFile: string) => string[]} buildArgs
+ * @property {boolean} [schemaEnforced]
+ * @property {(model: string, outputFile: string, schemaFile: string) => string[]} buildArgs
  * @property {(stdout: string, outputFileContents: string) => string} extractText
+ * @property {number} [fixedContextTokens] measured per-spawn overhead, used for
+ *   the pre-run cost estimate.
+ * @property {{ inputPerMillionUsd: number; outputPerMillionUsd: number }} [rates]
+ *   per-model price, keyed by model id. Absent means the run cannot be priced.
  */
 
 /** @type {Record<string, AgentSpec>} */
@@ -65,14 +71,19 @@ const AGENTS = {
   codex: {
     label: "Codex",
     command: "codex",
-    // The previous hardcoded list was wrong: codex v0.144 rejects `gpt-5-codex`
-    // outright on a ChatGPT account ("not supported when using Codex with a
-    // ChatGPT account") and warns that its metadata is unknown. Which ids are
-    // accepted depends on the account tier, so rather than guess we defer to
-    // whatever the user already configured in ~/.codex/config.toml.
+    // Verified live against codex v0.144 on a ChatGPT account: EVERY explicit
+    // model id is rejected at the API with "The '<id>' model is not supported
+    // when using Codex with a ChatGPT account" — gpt-5-codex, gpt-5.1-codex,
+    // gpt-5.1-codex-mini and o4-mini were all probed and all refused. So there
+    // is no model list to offer here; the only thing that works is omitting -m
+    // and letting codex use whatever ~/.codex/config.toml selects. A dropdown
+    // of ids that cannot run would be worse UI than one honest row.
     models: [{ id: "", label: "Codex default (from config)" }],
     defaultModel: "",
-    buildArgs: (/** @type {string} */ model, /** @type {string} */ outputFile) => [
+    // Codex constrains its reply with a JSON Schema rather than a prompt
+    // instruction, which is why it needs a second temp file.
+    schemaEnforced: true,
+    buildArgs: (/** @type {string} */ model, /** @type {string} */ outputFile, /** @type {string} */ schemaFile) => [
       "exec",
       // An empty model means "don't pass -m", letting codex pick its default.
       ...(model === "" ? [] : ["-m", model]),
@@ -81,12 +92,53 @@ const AGENTS = {
       // Without this codex refuses to start in any directory that is not a git
       // repo, which a discovered project may well not be.
       "--skip-git-repo-check",
+      // Indexing is stateless; persisting a session per batch would litter
+      // CODEX_HOME with a rollout file for every 30 files indexed.
+      "--ephemeral",
+      // Server-enforced reply shape, strictly better than asking for JSON in
+      // the prompt: the model cannot answer with prose or a code fence, so
+      // extractJsonArray never has to salvage anything.
+      "--output-schema", schemaFile,
       // codex writes its banner, transcript and errors to stderr and leaves
       // stdout EMPTY, so the reply has to be collected from a file.
       "-o", outputFile,
     ],
     extractText: (/** @type {string} */ _stdout, /** @type {string} */ outputFileContents) => outputFileContents,
   },
+};
+
+/**
+ * Reply schema for agents that support server-side shape enforcement.
+ *
+ * Two constraints here were found by live rejection rather than from the docs,
+ * and both are load-bearing:
+ *   1. the root must be `type: "object"` — an array root is refused outright
+ *      ("schema must be a JSON Schema of 'type: \"object\"'"), which is why the
+ *      entries are wrapped in `files` instead of returned bare the way the
+ *      Claude path returns them;
+ *   2. strict mode requires `required` to list EVERY key in `properties`, so
+ *      `features` is mandatory even for a file that has none — the model
+ *      returns an empty array rather than omitting the key.
+ */
+const REPLY_SCHEMA = {
+  type: "object",
+  properties: {
+    files: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          purpose: { type: "string" },
+          features: { type: "array", items: { type: "string" } },
+        },
+        required: ["path", "purpose", "features"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["files"],
+  additionalProperties: false,
 };
 
 /**
@@ -101,6 +153,86 @@ const AGENTS = {
 const BATCH_SIZE = 30;
 /** Chars of each file sent for summarization. Whole files blow the budget fast. */
 const EXCERPT_CHARS = 1600;
+
+/**
+ * Measured fixed context each spawn pays before it reads a single file, used
+ * only for the pre-run estimate.
+ *
+ * claude: 9,393, measured after the --setting-sources/--strict-mcp-config/
+ * --disallowed-tools trim (it was 34,322 with a default session).
+ * codex: ~16,000. Two identical 2-file runs reported 15,900 and 17,377 tokens,
+ * so this number carries roughly +/-10% of real variance on its own — which is
+ * the honest reason the UI must say "estimate" rather than quote a total.
+ * --ignore-user-config was measured as a possible trim and REJECTED: it came in
+ * at 17,377 vs 15,900, i.e. no saving, while discarding the user's model config.
+ */
+/** @type {Record<string, number>} */
+const FIXED_CONTEXT_TOKENS = { claude: 9393, codex: 16000 };
+
+/** Rough bytes-per-token. Universal approximation for English + source text. */
+const CHARS_PER_TOKEN = 4;
+
+/** Reply size per file: one short JSON object, measured at ~40 tokens. */
+const OUTPUT_TOKENS_PER_FILE = 40;
+
+/**
+ * Published per-million token prices, in USD.
+ *
+ * Only models whose price is actually known appear here. A model that is absent
+ * yields a null cost rather than a guessed one: showing a confidently wrong
+ * dollar figure is worse than showing none. Codex is deliberately absent — it
+ * bills against a ChatGPT plan on this account, not per token, so there is no
+ * per-token price that would be true.
+ */
+/** @type {Record<string, { inputPerMillionUsd: number; outputPerMillionUsd: number }>} */
+const MODEL_RATES = {
+  "claude-opus-4-8": { inputPerMillionUsd: 5, outputPerMillionUsd: 25 },
+  "claude-sonnet-5": { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
+  "claude-haiku-4-5-20251001": { inputPerMillionUsd: 1, outputPerMillionUsd: 5 },
+};
+
+/**
+ * Estimates what an enrichment run will cost BEFORE it is started, so the user
+ * can see the bill implied by a click rather than discover it afterwards.
+ *
+ * Deliberately computed here and not in the renderer: the renderer has no idea
+ * what BATCH_SIZE is, what the per-spawn overhead is, or how large the excerpts
+ * are, and duplicating those constants across the IPC boundary is exactly how
+ * they drift out of step with the code that actually spends the tokens.
+ *
+ * The excerpt term uses each file's real size capped at EXCERPT_CHARS, matching
+ * what buildPrompt will actually send, so a repo of small files is not billed as
+ * though every file were 1600 chars.
+ *
+ * @param {object} options
+ * @param {string} options.agent
+ * @param {string} [options.model]
+ * @param {number[]} options.fileSizes byte size of each file to be enriched
+ * @returns {{ files: number; batches: number; inputTokens: number; outputTokens: number; costUsd: number | null; model: string; agent: string; approximate: true }}
+ */
+function estimateEnrichmentCost({ agent, model, fileSizes }) {
+  const spec = AGENTS[agent];
+  if (spec === undefined) throw new Error(`Unknown discovery agent: ${agent}`);
+  const chosenModel = model ?? spec.defaultModel;
+
+  const files = fileSizes.length;
+  const batches = Math.ceil(files / BATCH_SIZE);
+  const overhead = FIXED_CONTEXT_TOKENS[agent] ?? 12000;
+
+  const excerptTokens = fileSizes.reduce(
+    (sum, size) => sum + Math.ceil(Math.min(size, EXCERPT_CHARS) / CHARS_PER_TOKEN),
+    0,
+  );
+  const inputTokens = batches * overhead + excerptTokens;
+  const outputTokens = files * OUTPUT_TOKENS_PER_FILE;
+
+  const rate = MODEL_RATES[chosenModel];
+  const costUsd = rate === undefined
+    ? null
+    : (inputTokens / 1_000_000) * rate.inputPerMillionUsd + (outputTokens / 1_000_000) * rate.outputPerMillionUsd;
+
+  return { agent, model: chosenModel, files, batches, inputTokens, outputTokens, costUsd, approximate: true };
+}
 
 /**
  * @param {string} agent
@@ -120,10 +252,27 @@ function listAgents() {
  * Agents wrap JSON in prose and fences no matter how firmly the prompt asks
  * them not to. Recover the first balanced top-level array instead of trusting
  * the whole reply to parse.
+ *
+ * Schema-enforced replies (codex) arrive as `{"files":[...]}` rather than a
+ * bare array, because the schema root is required to be an object. That case is
+ * tried first and exactly: when the whole reply parses cleanly there is nothing
+ * to salvage, and scanning for the first `[` would otherwise still work but for
+ * the wrong reason — it would find the array by accident rather than by
+ * contract, and would silently pick the wrong one if the shape ever gains a
+ * second array field.
+ *
  * @param {string} text
  * @returns {Array<Record<string, unknown>>}
  */
 function extractJsonArray(text) {
+  try {
+    const whole = JSON.parse(text);
+    if (Array.isArray(whole)) return whole;
+    if (whole !== null && typeof whole === "object" && Array.isArray(whole.files)) return whole.files;
+  } catch {
+    // Not a clean JSON document: fall through to the salvage scan below.
+  }
+
   const start = text.indexOf("[");
   if (start === -1) throw new Error("Agent reply contained no JSON array.");
   let depth = 0;
@@ -151,9 +300,13 @@ function extractJsonArray(text) {
 /**
  * @param {string} repoRoot
  * @param {string[]} filePaths
+ * @param {{ schemaEnforced?: boolean }} [options] when the agent enforces the
+ *   reply shape server-side, the JSON instructions are omitted: repeating them
+ *   would contradict the schema (which mandates an object root, not the bare
+ *   array the prompt asks for) and waste prompt tokens on every batch.
  * @returns {Promise<string>}
  */
-async function buildPrompt(repoRoot, filePaths) {
+async function buildPrompt(repoRoot, filePaths, options = {}) {
   /** @type {string[]} */
   const sections = [];
   for (const relativePath of filePaths) {
@@ -167,17 +320,23 @@ async function buildPrompt(repoRoot, filePaths) {
     sections.push(`### ${relativePath}\n\`\`\`\n${excerpt}\n\`\`\``);
   }
 
-  return [
+  const instructions = [
     "You are indexing a codebase for a cached project index.",
     "For each file below, write a one-sentence purpose describing what it actually does in this project.",
     "Be specific: say what this file is responsible for, not what kind of file it is.",
     'Bad: "UI component". Good: "Renders the discovery table and owns row selection state".',
-    "",
-    "Reply with ONLY a JSON array, no prose and no code fence, shaped:",
-    '[{"path":"<exact path as given>","purpose":"<one sentence>","features":["<area>"]}]',
-    "",
-    sections.join("\n\n"),
-  ].join("\n");
+    "Use the exact path as given. Return one entry per file.",
+  ];
+
+  if (options.schemaEnforced !== true) {
+    instructions.push(
+      "",
+      "Reply with ONLY a JSON array, no prose and no code fence, shaped:",
+      '[{"path":"<exact path as given>","purpose":"<one sentence>","features":["<area>"]}]',
+    );
+  }
+
+  return [...instructions, "", sections.join("\n\n")].join("\n");
 }
 
 /**
@@ -196,13 +355,27 @@ function runAgentBatch({ agent, model, prompt, cwd, signal }) {
 
   // Some CLIs (codex) only expose their reply through a file. Allocate one per
   // call so concurrent batches cannot read each other's output.
-  const outputFile = path.join(tmpdir(), `relay-discovery-${randomUUID()}.txt`);
+  const runId = randomUUID();
+  const outputFile = path.join(tmpdir(), `relay-discovery-${runId}.txt`);
+  const schemaFile = path.join(tmpdir(), `relay-discovery-${runId}.schema.json`);
 
   const run = new Promise((resolve, reject) => {
+    // --output-schema takes a path, not inline JSON, so the schema has to exist
+    // on disk before the child starts. Written synchronously for exactly that
+    // ordering reason: an async write could still be in flight at spawn time.
+    if (spec.schemaEnforced === true) {
+      try {
+        writeFileSync(schemaFile, JSON.stringify(REPLY_SCHEMA), "utf8");
+      } catch (error) {
+        reject(new Error(`Could not stage the ${spec.label} reply schema: ${error instanceof Error ? error.message : String(error)}`));
+        return;
+      }
+    }
+
     /** @type {import("node:child_process").ChildProcessWithoutNullStreams} */
     let child;
     try {
-      child = spawn(spec.command, spec.buildArgs(model, outputFile), {
+      child = spawn(spec.command, spec.buildArgs(model, outputFile, schemaFile), {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: process.env,
@@ -277,8 +450,11 @@ function runAgentBatch({ agent, model, prompt, cwd, signal }) {
     child.stdin.end();
   });
 
-  // Batches run in a loop, so leaking one temp file per batch would add up.
-  return run.finally(() => rm(outputFile, { force: true }).catch(() => {}));
+  // Batches run in a loop, so leaking temp files per batch would add up.
+  return run.finally(() => Promise.all([
+    rm(outputFile, { force: true }).catch(() => {}),
+    rm(schemaFile, { force: true }).catch(() => {}),
+  ]));
 }
 
 /**
@@ -321,7 +497,7 @@ async function enrichEntries({ repoRoot, entries, filePaths, agent, model, signa
 
     let results;
     try {
-      const prompt = await buildPrompt(repoRoot, batch);
+      const prompt = await buildPrompt(repoRoot, batch, { schemaEnforced: spec.schemaEnforced === true });
       results = await runAgentBatch({ agent, model: chosenModel, prompt, cwd: repoRoot, signal });
     } catch (batchError) {
       const message = batchError instanceof Error ? batchError.message : String(batchError);
@@ -362,9 +538,13 @@ async function enrichEntries({ repoRoot, entries, filePaths, agent, model, signa
 module.exports = {
   AGENTS,
   BATCH_SIZE,
+  EXCERPT_CHARS,
+  MODEL_RATES,
+  REPLY_SCHEMA,
   buildPrompt,
   describeAgent,
   enrichEntries,
+  estimateEnrichmentCost,
   extractJsonArray,
   listAgents,
   runAgentBatch,

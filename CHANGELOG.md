@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0] — 2026-07-21
+
+### Discovery
+
+- Repo discovery index with agent-driven file enrichment (purpose inference, exports/imports extraction) for Claude Code and Codex integrations
+- Passive, debounced indexing so discovery keeps up with edits without blocking the session
+- Fixed board-creation flow to name a newly created workspace directory after the repository folder (e.g. `relay`) instead of the board's title
+
 ## [0.2.0] — 2026-07-19
 
 ### Integrations
