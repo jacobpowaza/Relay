@@ -51,6 +51,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: rm -rf apps/desktop/release
       - run: pnpm --filter @relay/desktop package
         env:
@@ -83,6 +84,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: rm -rf apps/desktop/release
       - run: pnpm --filter @relay/desktop package
         env:
@@ -115,6 +117,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: Remove-Item -Recurse -Force apps/desktop/release -ErrorAction SilentlyContinue
       - run: pnpm --filter @relay/desktop package
         env:
@@ -148,6 +151,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: rm -rf apps/desktop/release
       - run: pnpm --filter @relay/desktop package
         env:
